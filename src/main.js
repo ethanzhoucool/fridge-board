@@ -117,9 +117,10 @@ async function refresh(keepWeek = true) {
 }
 
 let channel, refreshT;
+let saving = 0; // optimistic taps still in flight; refreshing now would show stale counts
 function subscribe() {
   if (channel) return;
-  const later = () => { clearTimeout(refreshT); refreshT = setTimeout(() => refresh(), 400); };
+  const later = () => { clearTimeout(refreshT); refreshT = setTimeout(() => (saving ? later() : refresh()), 400); };
   channel = sb.channel("board");
   for (const table of ["posts", "goals", "weeks"]) channel.on("postgres_changes", { event: "*", schema: "public", table }, later);
   channel.subscribe();
@@ -216,7 +217,9 @@ async function tick(id) {
   const g = S.goals.find((x) => x.id === id);
   g.done = g.done >= g.target ? 0 : g.done + 1;
   render();
+  saving++;
   const { error } = await sb.from("goals").update({ done: g.done }).eq("id", id);
+  saving--;
   if (error) fail(error);
 }
 
@@ -225,7 +228,9 @@ async function toggleChip(i) {
   const patch = i < 0 ? { group_done: !w.group_done } : { fun: w.fun.map((f, k) => (k === i ? { ...f, done: !f.done } : f)) };
   Object.assign(w, patch);
   render();
+  saving++;
   const { error } = await sb.from("weeks").update(patch).eq("id", w.id);
+  saving--;
   if (error) fail(error);
 }
 
