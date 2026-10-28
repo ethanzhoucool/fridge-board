@@ -8,7 +8,7 @@ export const setKey = (v) => { try { v ? localStorage.setItem(KEY, v.trim()) : l
 const SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["group_goal", "fun", "charity", "rules", "people"],
+  required: ["group_goal", "fun", "charity", "people"],
   properties: {
     group_goal: { type: ["string", "null"], description: "The shared group goal, e.g. '3k / person'" },
     fun: {
@@ -19,7 +19,6 @@ const SCHEMA = {
       },
     },
     charity: { type: ["string", "null"] },
-    rules: { type: "array", items: { type: "string" } },
     people: {
       type: "array",
       items: {
@@ -48,7 +47,7 @@ const PROMPT = (names) => `This is a photo of our group's weekly goals whiteboar
 Transcribe it into the schema. Keep goal labels short (2-4 words) and put extra detail in "note".
 Turn counts into "target" (e.g. "gym 3 times" -> label "Gym", target 3; "5 chapters" -> target 5). One-off goals get target 1.
 If a number appears after a colon at the end of a goal line, that is progress so far ("done"); otherwise done is 0.
-Fun goals are usually listed under a "Fun" heading with checkboxes. "Draft" or rule lists go in "rules".
+Fun goals are usually listed under a "Fun" heading with checkboxes. Ignore "Draft" lists, rules and brainstorms.
 ${names.length ? `Our members are: ${names.join(", ")}. Match handwritten names to these spellings (e.g. "Ethan Z" -> "Ethan").` : ""}`;
 
 export async function scanBoard(jpegBase64, memberNames) {

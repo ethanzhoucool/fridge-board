@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite --port 5179",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "demo": "vite --port 5180 --mode demo"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.3.0",

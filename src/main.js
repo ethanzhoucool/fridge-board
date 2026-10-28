@@ -114,6 +114,7 @@ async function refresh(keepWeek = true) {
     S.posts = [];
   }
   render();
+  if (notesOpen) drawNotes();
 }
 
 let channel, refreshT;
@@ -133,56 +134,119 @@ function weekRange(w) {
   const d = new Date(w.starts_on + "T00:00");
   const e = new Date(d); e.setDate(d.getDate() + 6);
   const f = (x) => x.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  return `${f(d)} - ${f(e)}`;
+  return `${f(d)} – ${f(e)}`;
 }
+
+const menuBtn = `<button class="menu-btn" data-act="menu" aria-label="Menu"><i class="ph ph-list"></i></button>`;
 
 function render() {
   const w = week();
   if (!w) {
-    app.innerHTML = `<header><div><h1 class="hand">Fridge.</h1></div>${tools()}</header>
-      <div class="center" style="min-height:50dvh"><p>No board yet. Snap the fridge and the goals fill in.</p>
-      <button class="primary" data-act="scan"><i class="ph ph-camera"></i> Scan the board</button>
+    app.innerHTML = `<header><h1 class="hand">Fridge.</h1>${menuBtn}</header>
+      <div class="center" style="min-height:60dvh"><p>No board yet. Snap the fridge and the goals fill in.</p>
+      <button class="primary" data-act="scan">Scan the board</button>
       <button class="ghost" data-act="blank">Start blank</button></div>`;
     return wire();
   }
-  const chips = [];
-  if (w.group_goal) chips.push({ label: w.group_goal, done: w.group_done, i: -1 });
-  w.fun.forEach((f, i) => chips.push({ ...f, i }));
+  const shared = [];
+  if (w.group_goal) shared.push({ label: w.group_goal, done: w.group_done, i: -1 });
+  w.fun.forEach((f, i) => shared.push({ ...f, i }));
   const latest = w.id === S.weeks[0]?.id;
+  const sub = w.charity ? `Charity · ${esc(w.charity)}` : weekRange(w);
 
   app.innerHTML = `
     <header>
-      <button style="text-align:left" data-act="weeks"><h1 class="hand">Week ${w.number}.</h1><small>${weekRange(w)}${latest ? "" : " · past week"}</small></button>
-      ${tools()}
+      <div><h1 class="hand">Week ${w.number}.</h1><p class="sub">${latest ? sub : `Past week · ${weekRange(w)}`}</p></div>
+      ${menuBtn}
     </header>
-    ${chips.length ? `<div class="strip">${chips.map((c) => `<button class="chip ${c.done ? "done" : ""}" data-chip="${c.i}"><span class="box">${c.done ? '<i class="ph-bold ph-check"></i>' : ""}</span>${esc(c.label)}</button>`).join("")}</div>` : ""}
-    <section>${S.members.map(personBlock).join("")}</section>
-    ${w.charity || w.rules.length ? `<div class="extras">${w.charity ? `<div><b>Charity</b>${esc(w.charity)}</div>` : ""}${w.rules.length ? `<div><b>Rules</b>${w.rules.map(esc).join(" · ")}</div>` : ""}</div>` : ""}
-    <h2 class="feed-title hand">This week</h2>
-    ${S.posts.length ? `<section class="feed">${S.posts.map(noteBlock).join("")}</section>` : `<div class="feed-empty">Nothing yet. Post a voice note, a thought, or proof.</div>`}
-    <nav class="fab">
-      <button title="Photo" data-act="photo"><i class="ph ph-camera"></i></button>
-      <button class="rec" title="Voice note" data-act="voice"><i class="ph-fill ph-microphone"></i></button>
-      <button title="Text" data-act="text"><i class="ph ph-pencil-simple"></i></button>
-    </nav>`;
+    ${shared.length ? `<section class="shared hand">${shared.map((c) => `<button class="chk ${c.done ? "on" : ""}" data-chip="${c.i}">${esc(c.label)}${box}</button>`).join("")}</section>` : ""}
+    <section class="people">${S.members.map(personBlock).join("")}</section>
+    <button class="bar" data-act="notes"><i class="ph ph-notepad"></i>Notes${S.posts.length ? `<span class="n">${S.posts.length}</span>` : ""}</button>`;
   wire();
 }
 
-const tools = () => `<div class="tools">
-  <button class="icon-btn" title="Scan the board" data-act="scan"><i class="ph ph-scan"></i></button>
-  <button class="icon-btn" title="Settings" data-act="settings"><i class="ph ph-gear-six"></i></button></div>`;
+const box = `<svg class="box" viewBox="0 0 17 17" aria-hidden="true"><path d="M1.6 2.2 L15.2 1.6 L15.6 15.1 L1.9 15.6 Z"/><path class="tick" d="M4.5 9.2 L7.4 12.4 L14.8 3.2"/></svg>`;
 
 function personBlock(m) {
   const goals = S.goals.filter((g) => g.member_id === m.id);
-  return `<div class="person">
-    <div class="person-h">${m.avatar_url ? `<img src="${esc(m.avatar_url)}" alt="" referrerpolicy="no-referrer">` : ""}<h2 class="hand">${esc(m.name)}</h2>
-      <button class="icon-btn" title="Edit goals" data-edit="${m.id}"><i class="ph ph-pencil-simple-line"></i></button></div>
-    ${goals.length ? goals.map((g) => `<button class="goal ${g.done >= g.target ? "complete" : ""}" data-goal="${g.id}">
-        <span>${esc(g.label)}${g.note ? `<small>${esc(g.note)}</small>` : ""}</span>
-        <span class="tally" aria-label="${g.done} of ${g.target}">${Array.from({ length: g.target }, (_, k) => `<i class="${k < g.done ? "on" : ""}"></i>`).join("")}</span>
-      </button>`).join("") : `<div class="empty-goals">No goals yet</div>`}
+  if (!goals.length && m.id !== S.me.id) return "";
+  const mine = m.id === S.me.id;
+  return `<div class="person hand ${mine ? "mine" : ""}">
+    <h2>${esc(m.name)}</h2>
+    ${goals.length ? goals.map((g) => `<${mine ? "button" : "div"} class="goal ${g.done >= g.target ? "full" : ""}" data-goal="${g.id}">
+        <span class="t">${esc(g.label)}${g.note ? `<small>${esc(g.note)}</small>` : ""}</span>${tally(g)}</${mine ? "button" : "div"}>`).join("")
+      : `<button class="goal empty" data-act="mine">Add your goals</button>`}
   </div>`;
 }
+
+// Hand-drawn tally: four strokes and a slash per group of five. Marks still to go are drawn faintly.
+const rnd = (s) => { const x = Math.sin(s * 999.7) * 43758.5453; return x - Math.floor(x); };
+function tally(g, fresh = false) {
+  const W = 8.5, GAP = 10, H = 20, parts = [];
+  let x = 1, start = 1;
+  for (let k = 0; k < g.target; k++) {
+    const cls = (k < g.done ? "on" : "off") + (fresh && k === g.done - 1 ? " new" : "");
+    const j = (n) => (rnd(g.id * 31 + k * 7 + n) - 0.5) * 2.4;
+    if (k % 5 === 4) {
+      parts.push(`<path class="${cls}" d="M${start - 3 + j(1)} ${H - 4 + j(2)} Q${(start + x) / 2} ${H / 2 + j(3)} ${x + 1 + j(4)} ${4 + j(5)}"/>`);
+      x += GAP; start = x;
+    } else {
+      parts.push(`<path class="${cls}" d="M${x + j(1)} ${2 + j(2) * 0.6} Q${x + j(3)} ${H / 2} ${x + 1.2 + j(4)} ${H - 2 + j(5) * 0.6}"/>`);
+      x += W;
+    }
+  }
+  return `<svg class="tally" viewBox="-4 0 ${x + 4} ${H}" width="${x + 4}" height="${H}" aria-label="${g.done} of ${g.target}">${parts.join("")}</svg>`;
+}
+
+function wire() {
+  app.querySelectorAll("[data-act]").forEach((b) => (b.onclick = () => actions[b.dataset.act]()));
+  app.querySelectorAll("[data-chip]").forEach((b) => (b.onclick = () => toggleChip(+b.dataset.chip, b)));
+}
+
+// Your own tallies only: tap adds a mark, press and hold rubs one out.
+let hold, held, downAt;
+app.addEventListener("pointerdown", (e) => {
+  const r = e.target.closest(".mine .goal[data-goal]");
+  if (!r) return;
+  held = false; downAt = [e.clientX, e.clientY];
+  hold = setTimeout(() => { held = true; navigator.vibrate?.(10); change(+r.dataset.goal, -1); }, 450);
+});
+app.addEventListener("pointermove", (e) => { if (downAt && Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 8) { clearTimeout(hold); downAt = null; } });
+app.addEventListener("pointercancel", () => { clearTimeout(hold); downAt = null; });
+app.addEventListener("pointerup", (e) => {
+  clearTimeout(hold);
+  const r = e.target.closest(".mine .goal[data-goal]");
+  if (r && downAt && !held) change(+r.dataset.goal, 1);
+  downAt = null;
+});
+app.addEventListener("contextmenu", (e) => e.target.closest(".mine .goal") && e.preventDefault());
+
+async function change(id, d) {
+  const g = S.goals.find((x) => x.id === id);
+  const next = Math.min(g.target, Math.max(0, g.done + d));
+  if (!g || next === g.done) return;
+  g.done = next;
+  const row = app.querySelector(`[data-goal="${id}"]`);
+  row.querySelector(".tally").outerHTML = tally(g, d > 0);
+  row.classList.toggle("full", g.done >= g.target);
+  saving++;
+  const { error } = await sb.from("goals").update({ done: g.done }).eq("id", id);
+  saving--;
+  if (error) fail(error);
+}
+
+async function toggleChip(i, btn) {
+  const w = week();
+  const patch = i < 0 ? { group_done: !w.group_done } : { fun: w.fun.map((f, k) => (k === i ? { ...f, done: !f.done } : f)) };
+  Object.assign(w, patch);
+  btn.classList.toggle("on");
+  saving++;
+  const { error } = await sb.from("weeks").update(patch).eq("id", w.id);
+  saving--;
+  if (error) fail(error);
+}
+
+// ---------- Notes ----------
 
 function ago(ts) {
   const s = (Date.now() - new Date(ts)) / 1000;
@@ -195,43 +259,21 @@ function ago(ts) {
 function noteBlock(p) {
   const who = member(p.member_id);
   const goal = p.goal_id && S.goals.find((g) => g.id === p.goal_id);
-  const mine = p.member_id === S.me.id;
-  const meta = `<div class="meta"><b>${esc(who?.name)}</b><span>${p.kind === "voice" ? fmt(p.duration || 0) : ago(p.created_at)}</span>${mine ? `<button class="del" title="Delete" data-del="${p.id}"><i class="ph ph-x"></i></button>` : ""}</div>`;
-  const tag = goal ? `<span class="tag">${esc(goal.label)}</span>` : "";
-  if (p.kind === "photo") return `<article class="note"><img src="${esc(S.urls[p.media_path] || "")}" alt="${esc(who?.name)}${goal ? ": " + esc(goal.label) : ""}" loading="lazy">${tag}${p.body ? `<p>${esc(p.body)}</p>` : ""}${meta}</article>`;
-  if (p.kind === "text") return `<article class="note"><p class="big">${esc(p.body)}</p>${meta}</article>`;
-  return `<article class="note"><button class="voice" data-play="${p.id}"><span class="play"><i class="ph-fill ph-play"></i></span>
-    <span class="wave">${wave(p.id).map((h) => `<i style="height:${Math.round(h * 100)}%"></i>`).join("")}</span></button>${tag}${meta}</article>`;
+  const head = `<div class="who"><b>${esc(who?.name)}</b>${ago(p.created_at)}${goal ? ` · ${esc(goal.label)}` : ""}
+    ${p.member_id === S.me.id ? `<button class="del" data-del="${p.id}" aria-label="Delete"><i class="ph ph-x"></i></button>` : ""}</div>`;
+  if (p.kind === "photo") return `<div class="note">${head}<img src="${esc(S.urls[p.media_path] || "")}" alt="" loading="lazy">${p.body ? `<p class="hand">${esc(p.body)}</p>` : ""}</div>`;
+  if (p.kind === "text") return `<div class="note">${head}<p class="hand">${esc(p.body)}</p></div>`;
+  return `<div class="note">${head}<button class="vn" data-play="${p.id}"><span class="play"><i class="ph-fill ph-play"></i></span>
+    <span class="wave">${wave(p.id, 32).map((h) => `<i style="height:${Math.round(h * 100)}%"></i>`).join("")}</span><span class="len">${fmt(p.duration || 0)}</span></button></div>`;
 }
 
-function wire() {
-  app.querySelectorAll("[data-act]").forEach((b) => (b.onclick = () => actions[b.dataset.act]()));
-  app.querySelectorAll("[data-goal]").forEach((b) => (b.onclick = () => tick(+b.dataset.goal)));
-  app.querySelectorAll("[data-chip]").forEach((b) => (b.onclick = () => toggleChip(+b.dataset.chip)));
-  app.querySelectorAll("[data-edit]").forEach((b) => (b.onclick = () => editPerson(b.dataset.edit)));
-  app.querySelectorAll("[data-play]").forEach((b) => (b.onclick = () => play(b, +b.dataset.play)));
-  app.querySelectorAll("[data-del]").forEach((b) => (b.onclick = () => delPost(+b.dataset.del)));
-}
-
-async function tick(id) {
-  const g = S.goals.find((x) => x.id === id);
-  g.done = g.done >= g.target ? 0 : g.done + 1;
-  render();
-  saving++;
-  const { error } = await sb.from("goals").update({ done: g.done }).eq("id", id);
-  saving--;
-  if (error) fail(error);
-}
-
-async function toggleChip(i) {
-  const w = week();
-  const patch = i < 0 ? { group_done: !w.group_done } : { fun: w.fun.map((f, k) => (k === i ? { ...f, done: !f.done } : f)) };
-  Object.assign(w, patch);
-  render();
-  saving++;
-  const { error } = await sb.from("weeks").update(patch).eq("id", w.id);
-  saving--;
-  if (error) fail(error);
+let notesOpen = false;
+function drawNotes() {
+  const list = $("#notes", sheet);
+  if (!list) return;
+  list.innerHTML = S.posts.length ? S.posts.map(noteBlock).join("") : `<p class="none">Nothing yet. Say how it's going.</p>`;
+  list.querySelectorAll("[data-play]").forEach((b) => (b.onclick = () => play(b, +b.dataset.play)));
+  list.querySelectorAll("[data-del]").forEach((b) => (b.onclick = () => delPost(+b.dataset.del)));
 }
 
 const audio = new Audio();
@@ -242,8 +284,8 @@ function play(btn, id) {
   const bars = [...btn.querySelectorAll(".wave i")];
   const reset = () => { bars.forEach((b) => b.classList.remove("on")); icon.innerHTML = '<i class="ph-fill ph-play"></i>'; };
   if (playing === id) { audio.pause(); playing = null; return reset(); }
-  app.querySelectorAll(".voice .play").forEach((el) => (el.innerHTML = '<i class="ph-fill ph-play"></i>'));
-  app.querySelectorAll(".wave i.on").forEach((el) => el.classList.remove("on"));
+  sheet.querySelectorAll(".vn .play").forEach((el) => (el.innerHTML = '<i class="ph-fill ph-play"></i>'));
+  sheet.querySelectorAll(".wave i.on").forEach((el) => el.classList.remove("on"));
   playing = id;
   audio.src = S.urls[p.media_path];
   audio.ontimeupdate = () => {
@@ -257,30 +299,41 @@ function play(btn, id) {
 }
 
 async function delPost(id) {
-  if (!confirm("Delete this post?")) return;
+  if (!confirm("Delete this note?")) return;
   const p = S.posts.find((x) => x.id === id);
   const { error } = await sb.from("posts").delete().eq("id", id);
   if (error) return fail(error);
   if (p.media_path) sb.storage.from("media").remove([p.media_path]);
   S.posts = S.posts.filter((x) => x.id !== id);
+  drawNotes();
   render();
 }
 
 // ---------- Sheets ----------
 
 let onClose = null;
-function openSheet(html) {
+function openSheet(html, kind = "") {
   onClose?.();
   onClose = null;
+  notesOpen = false;
+  closeMenu();
+  sheet.className = `sheet ${kind}`;
   sheet.innerHTML = html;
   sheetWrap.classList.add("open");
 }
 function closeSheet() {
   onClose?.();
   onClose = null;
+  notesOpen = false;
+  audio.pause(); playing = null;
   sheetWrap.classList.remove("open");
 }
 $(".sheet-bg").onclick = closeSheet;
+
+const menu = $("#menu");
+function closeMenu() { document.body.classList.remove("menu-open"); }
+$(".menu-bg").onclick = closeMenu;
+menu.querySelectorAll("[data-act]").forEach((b) => (b.onclick = () => { closeMenu(); actions[b.dataset.act](); }));
 
 function pickFile(accept, capture) {
   return new Promise((res) => {
@@ -311,48 +364,90 @@ function busy(btn, label = "Posting") {
   btn.innerHTML = `<i class="ph ph-circle-notch spin"></i> ${label}`;
 }
 
-const actions = {
-  async voice() {
-    openSheet(`<h3>Recording</h3><div class="timer" id="t">0:00</div><div class="muted" style="font-size:13px">up to 2:00</div>
-      <div class="wave live" id="live">${"<i></i>".repeat(28)}</div>
-      <div class="row-btns"><button class="ghost" id="x">Cancel</button><button class="primary" id="ok">Post</button></div>`);
-    let rec;
+// The bottom of the notes sheet: close, mic, pen. Pen and mic swap in place.
+function compose() {
+  const c = $("#cmp", sheet);
+  if (!c) return;
+  c.className = "compose";
+  c.innerHTML = `<button class="round" id="x" aria-label="Close"><i class="ph ph-x"></i></button>
+    <button class="round mic" id="mic" aria-label="Record a voice note"><i class="ph-fill ph-microphone"></i></button>
+    <button class="round" id="pen" aria-label="Write a note"><i class="ph ph-pen-nib"></i></button>`;
+  $("#x", c).onclick = closeSheet;
+  $("#mic", c).onclick = record;
+  $("#pen", c).onclick = write;
+}
+
+function write() {
+  const c = $("#cmp", sheet);
+  c.className = "compose write";
+  c.innerHTML = `<button class="round sm" id="back" aria-label="Back"><i class="ph ph-caret-left"></i></button>
+    <textarea id="tx" class="hand" rows="1" maxlength="2000" placeholder="Write it on the board"></textarea>
+    <button class="round sm send" id="ok" aria-label="Post"><i class="ph ph-arrow-up"></i></button>`;
+  const tx = $("#tx", c);
+  tx.oninput = () => { tx.style.height = "auto"; tx.style.height = Math.min(tx.scrollHeight, 140) + "px"; };
+  tx.focus();
+  $("#back", c).onclick = compose;
+  $("#ok", c).onclick = async (e) => {
+    const body = tx.value.trim();
+    if (!body) return;
+    e.currentTarget.disabled = true;
+    try { await addPost({ kind: "text", body }); compose(); $("#notes", sheet)?.scrollTo(0, 0); } catch (err) { e.currentTarget.disabled = false; fail(err); }
+  };
+}
+
+async function record() {
+  const c = $("#cmp", sheet);
+  c.className = "compose rec";
+  c.innerHTML = `<button class="round sm" id="x" aria-label="Cancel"><i class="ph ph-x"></i></button>
+    <span class="dot"></span><span class="time" id="t">0:00</span><span class="live" id="live">${"<i></i>".repeat(24)}</span>
+    <button class="round sm send" id="ok" aria-label="Post voice note"><i class="ph ph-arrow-up"></i></button>`;
+  let rec;
+  try {
+    rec = await startRecording({
+      onLevel: (d) => c.querySelectorAll("#live i").forEach((b, k) => (b.style.height = 12 + (d[k % d.length] / 255) * 88 + "%")),
+      onLimit: () => $("#ok", c)?.click(),
+    });
+  } catch {
+    compose();
+    return toast("Microphone access is needed for voice notes");
+  }
+  const timer = setInterval(() => { const t = $("#t", c); if (t) t.textContent = fmt(rec.elapsed()); }, 250);
+  onClose = () => { clearInterval(timer); rec.cancel(); };
+  $("#x", c).onclick = () => { onClose(); onClose = null; compose(); };
+  $("#ok", c).onclick = async (e) => {
+    onClose = null;
+    clearInterval(timer);
+    e.currentTarget.disabled = true;
     try {
-      rec = await startRecording({
-        onLevel: (d) => sheet.querySelectorAll("#live i").forEach((b, k) => (b.style.height = 6 + (d[k % d.length] / 255) * 42 + "px")),
-        onLimit: () => $("#ok", sheet)?.click(),
-      });
-    } catch {
-      closeSheet();
-      return toast("Microphone access is needed for voice notes");
-    }
-    const timer = setInterval(() => { const t = $("#t", sheet); if (t) t.textContent = fmt(rec.elapsed()); }, 250);
-    onClose = () => { clearInterval(timer); rec.cancel(); };
-    $("#x", sheet).onclick = closeSheet;
-    $("#ok", sheet).onclick = async (e) => {
-      onClose = null;
-      clearInterval(timer);
-      busy(e.currentTarget);
-      try {
-        const { blob, secs, type } = await rec.stop();
-        if (secs < 1) { closeSheet(); return toast("Too short"); }
-        const path = await upload(blob, type.includes("mp4") ? "m4a" : "webm");
-        await addPost({ kind: "voice", media_path: path, duration: secs });
-        closeSheet();
-      } catch (err) { closeSheet(); fail(err); }
-    };
+      const { blob, secs, type } = await rec.stop();
+      if (secs < 1) { compose(); return toast("Too short"); }
+      const path = await upload(blob, type.includes("mp4") ? "m4a" : "webm");
+      await addPost({ kind: "voice", media_path: path, duration: secs });
+      compose();
+      $("#notes", sheet)?.scrollTo(0, 0);
+    } catch (err) { compose(); fail(err); }
+  };
+}
+
+const actions = {
+  menu() { document.body.classList.add("menu-open"); },
+
+  notes() {
+    openSheet(`<div class="notes" id="notes"></div><div class="compose" id="cmp"></div>`, "notes-sheet");
+    notesOpen = true;
+    drawNotes();
+    compose();
   },
 
-  text() {
-    openSheet(`<h3>Jot it down</h3><textarea id="tx" placeholder="How's the week going?" maxlength="2000"></textarea>
-      <button class="primary" id="ok">Post</button>`);
-    setTimeout(() => $("#tx", sheet).focus(), 300);
-    $("#ok", sheet).onclick = async (e) => {
-      const body = $("#tx", sheet).value.trim();
-      if (!body) return;
-      busy(e.currentTarget);
-      try { await addPost({ kind: "text", body }); closeSheet(); } catch (err) { fail(err); }
-    };
+  mine() { editPerson(S.me.id); },
+
+  async invite() {
+    const { data: code, error } = await sb.rpc("join_code");
+    if (error) return fail(error);
+    const link = `${location.origin}/?join=${code}`;
+    if (navigator.share) return navigator.share({ title: "Join our board", url: link }).catch(() => {});
+    await navigator.clipboard.writeText(link);
+    toast("Invite link copied");
   },
 
   async photo() {
@@ -406,7 +501,7 @@ const actions = {
   },
 
   async blank() {
-    await createWeek({ group_goal: null, fun: [], charity: null, rules: [], people: [] });
+    await createWeek({ group_goal: null, fun: [], charity: null, people: [] });
   },
 
   weeks() {
@@ -450,7 +545,7 @@ function showScan(board) {
       ${board.people.map((p) => `<div><span class="grow"><b>${esc(p.name)}</b>${p.goals.map((g) => esc(g.target > 1 ? `${g.label} ×${g.target}` : g.label)).join(", ")}</span></div>`).join("")}
       ${board.group_goal || board.fun.length ? `<div><span class="grow"><b>Group</b>${[board.group_goal, ...board.fun.map((f) => f.label)].filter(Boolean).map(esc).join(", ")}</span></div>` : ""}
     </div>
-    <p class="help" style="text-align:center;margin-bottom:16px">You can fix anything after with the pencil next to each name.</p>
+    <p class="help" style="text-align:center;margin-bottom:16px">Everyone can fix their own goals after from the menu.</p>
     <div class="row-btns">${canFill ? `<button class="primary" id="fill">Fill Week ${w.number}</button>` : `<button class="primary" id="new">Start Week ${(S.weeks[0]?.number || 0) + 1}</button>`}</div>`);
   const go = async (e, fill) => {
     busy(e.currentTarget, "Saving");
@@ -461,15 +556,15 @@ function showScan(board) {
 }
 
 async function createWeek(board, existing = null) {
-  const fields = { group_goal: board.group_goal, group_done: false, fun: board.fun, charity: board.charity, rules: board.rules };
+  const fields = { group_goal: board.group_goal, group_done: false, fun: board.fun, charity: board.charity };
   let w = existing;
   if (w) {
     const { error } = await sb.from("weeks").update(fields).eq("id", w.id);
     if (error) throw error;
   } else {
     const prev = S.weeks[0];
-    // Carry over the group goal, charity and rules when starting blank.
-    if (!board.people.length && prev) Object.assign(fields, { group_goal: prev.group_goal, charity: prev.charity, rules: prev.rules, fun: prev.fun.map((f) => ({ ...f, done: false })) });
+    // Carry over the group goal, fun goals and charity when starting blank.
+    if (!board.people.length && prev) Object.assign(fields, { group_goal: prev.group_goal, charity: prev.charity, fun: prev.fun.map((f) => ({ ...f, done: false })) });
     const { data, error } = await sb.from("weeks").insert({ number: (prev?.number || 0) + 1, ...fields }).select().single();
     if (error) throw error;
     w = data;
@@ -545,7 +640,6 @@ function editWeek() {
     <label class="lbl">Group goal</label><input class="field" id="gg" value="${esc(w.group_goal || "")}" maxlength="60">
     <label class="lbl">Fun goals (comma separated)</label><input class="field" id="fun" value="${esc(w.fun.map((f) => f.label).join(", "))}">
     <label class="lbl">Charity</label><input class="field" id="ch" value="${esc(w.charity || "")}" maxlength="80">
-    <label class="lbl">Rules (one per line)</label><textarea id="ru" style="min-height:90px;font:15px/1.4 Geist,sans-serif;margin:0 0 16px">${esc(w.rules.join("\n"))}</textarea>
     <label class="lbl">Starts on</label><input class="field" id="st" type="date" value="${w.starts_on}" style="margin-bottom:18px">
     <button class="primary" id="sv">Save</button>`);
   $("#sv", sheet).onclick = async (e) => {
@@ -555,7 +649,6 @@ function editWeek() {
       group_goal: $("#gg", sheet).value.trim() || null,
       fun: labels.map((label) => ({ label, done: w.fun.find((f) => f.label === label)?.done || false })),
       charity: $("#ch", sheet).value.trim() || null,
-      rules: $("#ru", sheet).value.split("\n").map((s) => s.trim()).filter(Boolean),
       starts_on: $("#st", sheet).value || w.starts_on,
     };
     const { error } = await sb.from("weeks").update(patch).eq("id", w.id);
