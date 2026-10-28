@@ -57,11 +57,10 @@ export async function scanBoard(jpegBase64, memberNames) {
   const { default: Anthropic } = await import("@anthropic-ai/sdk");
   const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
 
-  const res = await client.beta.messages.create({
-    model: "claude-opus-5-5",
+  // Haiku is plenty for reading a whiteboard and keeps each scan to a fraction of a cent.
+  const res = await client.messages.create({
+    model: "claude-haiku-5-5",
     max_tokens: 16000,
-    betas: ["server-side-fallback-2026-07-01"],
-    fallbacks: "default",
     output_config: { effort: "low", format: { type: "json_schema", schema: SCHEMA } },
     messages: [{
       role: "user",

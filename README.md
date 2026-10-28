@@ -8,7 +8,7 @@ Live: https://fridge-board-fawn.vercel.app
 
 - Vite + plain JS, installable as a home-screen web app
 - Supabase: Google sign-in, Postgres with row level security, private storage for media, realtime updates
-- Claude (`claude-opus-5-5`) reads board photos, called from the browser with a key saved on that device
+- Claude Haiku (`claude-haiku-5-5`) reads board photos, called from the browser with a key saved on that device
 
 ## Setup from scratch
 
