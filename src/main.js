@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { resizeImage, blobToBase64, startRecording, wave, fmt } from "./media.js";
 import { scanBoard, getKey, setKey } from "./scan.js";
+import { sfx } from "./sfx.js";
 
 const sb = createClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_ANON_KEY);
 const app = document.getElementById("app");
@@ -141,6 +142,8 @@ const menuBtn = `<button class="menu-btn" data-act="menu" aria-label="Menu"><i c
 
 function render() {
   const w = week();
+  clearTimeout(pendingT);
+  pending = null;
   if (!w) {
     app.innerHTML = `<header><h1 class="hand">Fridge.</h1>${menuBtn}</header>
       <div class="center" style="min-height:60dvh"><p>No board yet. Snap the fridge and the goals fill in.</p>
@@ -173,19 +176,22 @@ function personBlock(m) {
   const mine = m.id === S.me.id;
   return `<div class="person hand ${mine ? "mine" : ""}">
     <h2>${esc(m.name)}</h2>
-    ${goals.length ? goals.map((g) => `<${mine ? "button" : "div"} class="goal ${g.done >= g.target ? "full" : ""}" data-goal="${g.id}">
-        <span class="t">${esc(g.label)}${g.note ? `<small>${esc(g.note)}</small>` : ""}</span>${tally(g)}</${mine ? "button" : "div"}>`).join("")
+    ${goals.length ? goals.map((g) => `<div class="goal ${g.done >= g.target ? "full" : ""}" data-goal="${g.id}" ${mine ? 'role="button" tabindex="0"' : ""}>
+        <span class="t">${esc(g.label)}${g.note ? `<small>${esc(g.note)}</small>` : ""}${strike}</span>${tally(g)}</div>`).join("")
       : `<button class="goal empty" data-act="mine">Add your goals</button>`}
   </div>`;
 }
 
-// Hand-drawn tally: four strokes and a slash per group of five. Marks still to go are drawn faintly.
+const strike = `<svg class="strike" viewBox="0 0 100 10" preserveAspectRatio="none" aria-hidden="true"><path d="M1 6.5 C 18 3.5, 34 8, 52 5.5 S 84 3.5, 99 5"/></svg>`;
+
+// Hand-drawn tally: four strokes and a slash per group of five. Marks still to go are drawn faintly,
+// and a mark waiting for confirmation pulses.
 const rnd = (s) => { const x = Math.sin(s * 999.7) * 43758.5453; return x - Math.floor(x); };
-function tally(g, fresh = false) {
+function tally(g, fresh = false, pending = false) {
   const W = 8.5, GAP = 10, H = 20, parts = [];
   let x = 1, start = 1;
   for (let k = 0; k < g.target; k++) {
-    const cls = (k < g.done ? "on" : "off") + (fresh && k === g.done - 1 ? " new" : "");
+    const cls = (k < g.done ? "on" : pending && k === g.done ? "pend" : "off") + (fresh && k === g.done - 1 ? " new" : "");
     const j = (n) => (rnd(g.id * 31 + k * 7 + n) - 0.5) * 2.4;
     if (k % 5 === 4) {
       parts.push(`<path class="${cls}" d="M${start - 3 + j(1)} ${H - 4 + j(2)} Q${(start + x) / 2} ${H / 2 + j(3)} ${x + 1 + j(4)} ${4 + j(5)}"/>`);
@@ -203,36 +209,90 @@ function wire() {
   app.querySelectorAll("[data-chip]").forEach((b) => (b.onclick = () => toggleChip(+b.dataset.chip, b)));
 }
 
-// Your own tallies only: tap adds a mark, press and hold rubs one out.
-let hold, held, downAt;
+// Your own tallies only. Tap shows the next mark with a confirm button; press and hold rubs one out.
+let hold, held, downAt, pending = null, pendingT;
 app.addEventListener("pointerdown", (e) => {
   const r = e.target.closest(".mine .goal[data-goal]");
-  if (!r) return;
+  if (!r || e.target.closest(".ok")) return;
   held = false; downAt = [e.clientX, e.clientY];
-  hold = setTimeout(() => { held = true; navigator.vibrate?.(10); change(+r.dataset.goal, -1); }, 450);
+  hold = setTimeout(() => { held = true; navigator.vibrate?.(10); cancelPending(); change(+r.dataset.goal, -1); }, 450);
 });
 app.addEventListener("pointermove", (e) => { if (downAt && Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 8) { clearTimeout(hold); downAt = null; } });
 app.addEventListener("pointercancel", () => { clearTimeout(hold); downAt = null; });
 app.addEventListener("pointerup", (e) => {
   clearTimeout(hold);
   const r = e.target.closest(".mine .goal[data-goal]");
-  if (r && downAt && !held) change(+r.dataset.goal, 1);
+  if (r && downAt && !held && !e.target.closest(".ok")) {
+    const id = +r.dataset.goal;
+    pending === id ? cancelPending() : askConfirm(id);
+  }
   downAt = null;
 });
+app.addEventListener("click", (e) => {
+  if (e.target.closest(".ok")) { const id = pending; cancelPending(); change(id, 1); }
+});
+document.addEventListener("pointerdown", (e) => { if (pending && !e.target.closest(`[data-goal="${pending}"]`)) cancelPending(); });
 app.addEventListener("contextmenu", (e) => e.target.closest(".mine .goal") && e.preventDefault());
+
+function askConfirm(id) {
+  cancelPending();
+  const g = S.goals.find((x) => x.id === id);
+  if (!g || g.done >= g.target) return toast("Done. Hold to rub one out.");
+  pending = id;
+  const row = app.querySelector(`[data-goal="${id}"]`);
+  row.classList.add("pending");
+  row.querySelector(".tally").outerHTML = tally(g, false, true);
+  row.insertAdjacentHTML("beforeend", `<button class="ok" aria-label="Confirm ${esc(g.label)}"><i class="ph-bold ph-check"></i></button>`);
+  pendingT = setTimeout(cancelPending, 5000);
+}
+
+function cancelPending() {
+  clearTimeout(pendingT);
+  if (pending == null) return;
+  const row = app.querySelector(`[data-goal="${pending}"]`);
+  const g = S.goals.find((x) => x.id === pending);
+  pending = null;
+  if (!row || !g) return;
+  row.classList.remove("pending");
+  row.querySelector(".ok")?.remove();
+  row.querySelector(".tally").outerHTML = tally(g);
+}
 
 async function change(id, d) {
   const g = S.goals.find((x) => x.id === id);
   const next = Math.min(g.target, Math.max(0, g.done + d));
   if (!g || next === g.done) return;
+  const finished = next === g.target && g.done < g.target;
   g.done = next;
   const row = app.querySelector(`[data-goal="${id}"]`);
   row.querySelector(".tally").outerHTML = tally(g, d > 0);
   row.classList.toggle("full", g.done >= g.target);
+  if (finished) celebrate(row);
+  else d > 0 ? sfx.mark() : sfx.erase();
   saving++;
   const { error } = await sb.from("goals").update({ done: g.done }).eq("id", id);
   saving--;
   if (error) fail(error);
+}
+
+// Goal finished: the strike draws through, the line bounces, ink flecks fly off the tally, and it chimes.
+function celebrate(row) {
+  sfx.done();
+  navigator.vibrate?.([12, 60, 18]);
+  row.classList.remove("celebrate");
+  void row.offsetWidth;
+  row.classList.add("celebrate");
+  const t = row.querySelector(".tally").getBoundingClientRect(), r = row.getBoundingClientRect();
+  const burst = document.createElement("span");
+  burst.className = "burst";
+  burst.style.left = `${t.left - r.left + t.width / 2}px`;
+  burst.style.top = `${t.top - r.top + t.height / 2}px`;
+  burst.innerHTML = Array.from({ length: 10 }, (_, i) => {
+    const a = (i / 10) * Math.PI * 2 + Math.random() * 0.5, dist = 18 + Math.random() * 16;
+    return `<i style="--x:${Math.cos(a) * dist}px;--y:${Math.sin(a) * dist}px;--s:${0.6 + Math.random() * 0.7}"></i>`;
+  }).join("");
+  row.append(burst);
+  setTimeout(() => burst.remove(), 800);
 }
 
 async function toggleChip(i, btn) {

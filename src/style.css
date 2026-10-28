@@ -37,20 +37,39 @@ header .sub { color: var(--muted); font-size: 15px; line-height: 20px; margin-to
 /* People */
 .people { margin-top: var(--s6); display: grid; gap: var(--s6); }
 .person h2 { font-size: 22px; font-weight: 600; line-height: 28px; margin-bottom: var(--s1); }
-.goal { display: flex; align-items: center; justify-content: space-between; gap: var(--s4); width: 100%; min-height: 40px; text-align: left; font-size: 17px; line-height: 22px; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: manipulation; }
-.goal .t { position: relative; min-width: 0; }
+.goal { position: relative; display: flex; align-items: center; gap: var(--s3); width: 100%; min-height: 40px; text-align: left; font-size: 17px; line-height: 22px; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: manipulation; }
+.goal .t { position: relative; min-width: 0; margin-right: auto; transition: transform .3s var(--ease); }
 .goal .t small { color: var(--ink-2); font-size: 14px; margin-left: 6px; }
-.goal .t::after { content: ""; position: absolute; left: -2px; right: -2px; top: 52%; height: 2px; border-radius: 2px; background: var(--ink); transform: scaleX(0) rotate(-1.5deg); transform-origin: left; transition: transform .35s var(--ease); }
-.goal.full .t::after { transform: scaleX(1) rotate(-1.5deg); }
-.mine .goal { border-radius: 10px; margin: 0 -8px; padding: 0 8px; width: calc(100% + 16px); transition: background .2s; }
-.mine .goal:active { background: var(--fill); transition: none; }
+.strike { position: absolute; left: -4px; width: calc(100% + 8px); top: 50%; height: 10px; margin-top: -4px; overflow: visible; pointer-events: none; clip-path: inset(0 100% 0 0); transition: clip-path .3s var(--ease); }
+.strike path { fill: none; stroke: var(--ink); stroke-width: 2.4; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.goal.full .strike { clip-path: inset(-6px -6px -6px -6px); }
+.goal.full .t { color: var(--ink-2); }
+.mine .goal { cursor: pointer; border-radius: 10px; margin: 0 -8px; padding: 0 8px; width: calc(100% + 16px); transition: background .2s; }
+.mine .goal:active, .mine .goal.pending { background: var(--fill); transition: none; }
 .goal.empty { color: var(--ink-2); }
 .tally { flex: none; overflow: visible; }
 .tally path { fill: none; stroke-width: 2.2; stroke-linecap: round; }
 .tally .off { stroke: var(--ink-3); }
 .tally .on { stroke: var(--ink); }
+.tally .pend { stroke: var(--ink); animation: pend 1s ease-in-out infinite; }
 .tally .new { stroke-dasharray: 30; stroke-dashoffset: 30; animation: draw .24s var(--ease) forwards; }
 @keyframes draw { to { stroke-dashoffset: 0; } }
+@keyframes pend { 50% { opacity: .25; } }
+
+/* Confirm a mark */
+.ok { width: 32px; height: 32px; margin: -4px 0; flex: none; border-radius: 50%; display: grid; place-items: center; background: var(--ink); color: var(--board); font-size: 15px; animation: pop .28s cubic-bezier(.34, 1.56, .64, 1); }
+.ok:active { transform: scale(.9); }
+@keyframes pop { from { transform: scale(.3); opacity: 0; } }
+
+/* Finishing a goal */
+.celebrate .strike { transition-duration: .5s; transition-timing-function: cubic-bezier(.65, 0, .35, 1); }
+.celebrate .t { animation: bump .6s cubic-bezier(.34, 1.56, .64, 1) .35s; }
+.celebrate .tally .on { animation: glow .6s ease-out .35s; }
+@keyframes bump { 40% { transform: scale(1.06) rotate(-1deg); } }
+@keyframes glow { 40% { stroke-width: 3.4; } }
+.burst { position: absolute; width: 0; height: 0; pointer-events: none; }
+.burst i { position: absolute; left: -2.5px; top: -2.5px; width: 5px; height: 5px; border-radius: 50%; background: var(--ink); opacity: 0; animation: fleck .7s cubic-bezier(.2, .8, .3, 1) .3s; }
+@keyframes fleck { 0% { opacity: 1; transform: translate(0, 0) scale(var(--s)); } 100% { opacity: 0; transform: translate(var(--x), var(--y)) scale(0); } }
 
 /* Floating notes button */
 .bar { position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom) + var(--s4)); transform: translateX(-50%); z-index: 10; display: flex; align-items: center; gap: var(--s2); height: 48px; padding: 0 20px 0 16px; border-radius: 999px; background: var(--text); color: var(--board); font-size: 16px; font-weight: 500; box-shadow: 0 8px 24px -8px #0000004d; transition: transform .16s var(--ease); }
