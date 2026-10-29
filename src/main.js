@@ -114,8 +114,9 @@ async function refresh(keepWeek = true) {
     S.goals = [];
     S.posts = [];
   }
+  if (notesOpen) markSeen();
   render();
-  if (notesOpen) drawNotes();
+  if (notesOpen) { drawNotes(); drawCtx(); }
 }
 
 let channel, refreshT;
@@ -164,11 +165,43 @@ function render() {
     </header>
     ${shared.length ? `<section class="shared hand">${shared.map((c) => `<button class="chk ${c.done ? "on" : ""}" data-chip="${c.i}">${esc(c.label)}${box}</button>`).join("")}</section>` : ""}
     <section class="people">${S.members.map(personBlock).join("")}</section>
-    <button class="bar" data-act="notes"><i class="ph ph-notepad"></i>Notes${S.posts.length ? `<span class="n">${S.posts.length}</span>` : ""}</button>`;
+    ${lately()}
+    ${notesBar()}`;
   wire();
+  showAfter();
 }
 
 const box = `<svg class="box" viewBox="0 0 17 17" aria-hidden="true"><path d="M1.6 2.2 L15.2 1.6 L15.6 15.1 L1.9 15.6 Z"/><path class="tick" d="M4.5 9.2 L7.4 12.4 L14.8 3.2"/></svg>`;
+
+function notesBar() {
+  const fresh = unread();
+  return `<button class="bar" data-act="notes"><i class="ph ph-notepad"></i>Notes${fresh ? `<span class="new">${fresh} new</span>` : S.posts.length ? `<span class="n">${S.posts.length}</span>` : ""}</button>`;
+}
+
+// The week so far, right on the board: a strip of photos and the last few notes.
+function lately() {
+  if (!S.posts.length) return "";
+  const pics = S.posts.filter((p) => p.kind === "photo" && S.urls[p.media_path]);
+  const recent = S.posts.slice(0, 3);
+  const line = (p) => {
+    const g = p.goal_id && S.goals.find((x) => x.id === p.goal_id);
+    const what = p.kind === "voice" ? `<i class="ph ph-waveform"></i>${fmt(p.duration || 0)}` : p.kind === "photo" ? `<i class="ph ph-image"></i>${esc(p.body || "Photo")}` : esc(p.body);
+    return `<button class="line" data-line="${p.goal_id || ""}"><b>${esc(member(p.member_id)?.name)}</b><span class="what">${what}</span>${g ? `<span class="on">${esc(g.label)}</span>` : ""}<span class="when">${ago(p.created_at)}</span></button>`;
+  };
+  return `<section class="lately">
+    <h2 class="hand">Lately</h2>
+    ${pics.length ? `<div class="pics">${pics.map((p) => `<button data-pic="${esc(p.media_path)}"><img src="${esc(S.urls[p.media_path])}" alt="" loading="lazy"></button>`).join("")}</div>` : ""}
+    ${recent.map(line).join("")}
+  </section>`;
+}
+
+// Notes and photos on a goal show as a small badge on its row; tap it for the goal's thread.
+function badge(g) {
+  const ps = goalPosts(g.id);
+  if (!ps.length) return "";
+  const pic = ps.find((p) => p.kind === "photo" && S.urls[p.media_path]);
+  return `<button class="att ${pic ? "pic" : ""}" data-open="${g.id}" aria-label="${ps.length} on ${esc(g.label)}">${pic ? `<img src="${esc(S.urls[pic.media_path])}" alt="">` : `<i class="ph ph-chat-circle"></i>`}${ps.length > 1 || !pic ? `<span>${ps.length}</span>` : ""}</button>`;
+}
 
 function personBlock(m) {
   const goals = S.goals.filter((g) => g.member_id === m.id);
@@ -176,8 +209,8 @@ function personBlock(m) {
   const mine = m.id === S.me.id;
   return `<div class="person hand ${mine ? "mine" : ""}">
     <h2>${esc(m.name)}</h2>
-    ${goals.length ? goals.map((g) => `<div class="goal ${g.done >= g.target ? "full" : ""}" data-goal="${g.id}" ${mine ? 'role="button" tabindex="0"' : ""}>
-        <span class="t">${esc(g.label)}${g.note ? `<small>${esc(g.note)}</small>` : ""}${strike}</span>${tally(g)}</div>`).join("")
+    ${goals.length ? goals.map((g) => `<div class="goal ${g.done >= g.target ? "full" : ""}" data-goal="${g.id}" role="button" tabindex="0">
+        <span class="t">${esc(g.label)}${g.note ? `<small>${esc(g.note)}</small>` : ""}${strike}</span>${badge(g)}${tally(g)}</div>`).join("")
       : `<button class="goal empty" data-act="mine">Add your goals</button>`}
   </div>`;
 }
@@ -207,13 +240,17 @@ function tally(g, fresh = false, pending = false) {
 function wire() {
   app.querySelectorAll("[data-act]").forEach((b) => (b.onclick = () => actions[b.dataset.act]()));
   app.querySelectorAll("[data-chip]").forEach((b) => (b.onclick = () => toggleChip(+b.dataset.chip, b)));
+  app.querySelectorAll("[data-pic]").forEach((b) => (b.onclick = () => zoom(S.urls[b.dataset.pic])));
+  app.querySelectorAll("[data-line]").forEach((b) => (b.onclick = () => openNotes(b.dataset.line ? { goal: +b.dataset.line } : {})));
 }
 
-// Your own tallies only. Tap shows the next mark with a confirm button; press and hold rubs one out.
-let hold, held, downAt, pending = null, pendingT;
+// Your own tallies only. Tap shows the next mark with confirm and photo buttons; press and hold rubs one out.
+// Anyone else's goal opens its notes.
+const SKIP = ".ok, .cam, .att";
+let hold, held, downAt, pending = null, pendingT, afterT, afterId = null;
 app.addEventListener("pointerdown", (e) => {
   const r = e.target.closest(".mine .goal[data-goal]");
-  if (!r || e.target.closest(".ok")) return;
+  if (!r || e.target.closest(SKIP)) return;
   held = false; downAt = [e.clientX, e.clientY];
   hold = setTimeout(() => { held = true; navigator.vibrate?.(10); cancelPending(); change(+r.dataset.goal, -1); }, 450);
 });
@@ -222,14 +259,24 @@ app.addEventListener("pointercancel", () => { clearTimeout(hold); downAt = null;
 app.addEventListener("pointerup", (e) => {
   clearTimeout(hold);
   const r = e.target.closest(".mine .goal[data-goal]");
-  if (r && downAt && !held && !e.target.closest(".ok")) {
+  if (r && downAt && !held && !e.target.closest(SKIP)) {
     const id = +r.dataset.goal;
     pending === id ? cancelPending() : askConfirm(id);
   }
   downAt = null;
 });
 app.addEventListener("click", (e) => {
-  if (e.target.closest(".ok")) { const id = pending; cancelPending(); change(id, 1); }
+  const att = e.target.closest("[data-open]");
+  if (att) return openNotes({ goal: +att.dataset.open });
+  const cam = e.target.closest(".cam");
+  if (cam) return snap(+cam.closest("[data-goal]").dataset.goal, cam.classList.contains("now"));
+  if (e.target.closest(".ok")) { const id = pending; cancelPending(); change(id, 1); return offerPhoto(id); }
+  const other = e.target.closest(".goal[data-goal]");
+  if (other && !other.closest(".mine")) openNotes({ goal: +other.dataset.goal });
+});
+app.addEventListener("keydown", (e) => {
+  const r = e.target.closest?.(".goal[data-goal]");
+  if (r && (e.key === "Enter" || e.key === " ") && e.target === r) { e.preventDefault(); r.closest(".mine") ? askConfirm(+r.dataset.goal) : openNotes({ goal: +r.dataset.goal }); }
 });
 document.addEventListener("pointerdown", (e) => { if (pending && !e.target.closest(`[data-goal="${pending}"]`)) cancelPending(); });
 app.addEventListener("contextmenu", (e) => e.target.closest(".mine .goal") && e.preventDefault());
@@ -242,7 +289,8 @@ function askConfirm(id) {
   const row = app.querySelector(`[data-goal="${id}"]`);
   row.classList.add("pending");
   row.querySelector(".tally").outerHTML = tally(g, false, true);
-  row.insertAdjacentHTML("beforeend", `<button class="ok" aria-label="Confirm ${esc(g.label)}"><i class="ph-bold ph-check"></i></button>`);
+  clearAfter();
+  row.insertAdjacentHTML("beforeend", `<button class="cam now" aria-label="Mark ${esc(g.label)} with a photo"><i class="ph ph-camera"></i></button><button class="ok" aria-label="Confirm ${esc(g.label)}"><i class="ph-bold ph-check"></i></button>`);
   pendingT = setTimeout(cancelPending, 5000);
 }
 
@@ -254,8 +302,33 @@ function cancelPending() {
   pending = null;
   if (!row || !g) return;
   row.classList.remove("pending");
-  row.querySelector(".ok")?.remove();
+  row.querySelectorAll(".ok, .cam").forEach((b) => b.remove());
   row.querySelector(".tally").outerHTML = tally(g);
+}
+
+// Just marked without a photo: a camera lingers on the row for a few seconds to add one after.
+function offerPhoto(id) {
+  clearAfter();
+  afterId = id;
+  showAfter();
+  afterT = setTimeout(clearAfter, 4000);
+}
+// Also called after a re-render, so a realtime refresh doesn't take the camera away.
+function showAfter() {
+  const row = afterId != null && app.querySelector(`[data-goal="${afterId}"]`);
+  if (row && !$(".cam.after", row)) row.insertAdjacentHTML("beforeend", `<button class="cam after" aria-label="Add a photo"><i class="ph ph-camera-plus"></i></button>`);
+}
+function clearAfter() {
+  clearTimeout(afterT);
+  afterId = null;
+  app.querySelectorAll(".cam.after").forEach((b) => b.remove());
+}
+
+// Camera on a goal row. The file picker has to open inside the tap, so it goes first.
+function snap(id, mark) {
+  const file = pickFile("image/*");
+  if (mark) { cancelPending(); change(id, 1); } else clearAfter();
+  file.then((f) => f && openNotes({ goal: id }, f, !mark));
 }
 
 async function change(id, d) {
@@ -316,25 +389,108 @@ function ago(ts) {
   return new Date(ts).toLocaleDateString(undefined, { weekday: "short" });
 }
 
+function dayLabel(ts) {
+  const d = new Date(ts), today = new Date();
+  const days = Math.round((new Date(today.toDateString()) - new Date(d.toDateString())) / 864e5);
+  if (days === 0) return "Today";
+  if (days === 1) return "Yesterday";
+  return d.toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" });
+}
+
+// Tags live in the note text as #hashtags, so they need nothing extra in the database.
+const TAG = /(^|\s)#([\p{L}\p{N}_-]{1,24})/gu;
+const QUICK_TAGS = ["win", "stuck", "idea", "proud", "help"];
+const tagsOf = (body) => [...String(body || "").matchAll(TAG)].map((m) => m[2].toLowerCase());
+const rich = (body) => esc(body).replace(TAG, (_, sp, t) => `${sp}<button class="tag" data-tag="${t.toLowerCase()}">#${t}</button>`);
+const goalPosts = (id) => S.posts.filter((p) => p.goal_id === id);
+
+// Unread: the newest note you've seen this week, kept on this device.
+const seenKey = () => `fridge.seen.${S.weekId}`;
+const seenAt = () => { try { return localStorage.getItem(seenKey()) || ""; } catch { return ""; } };
+const unread = () => S.posts.filter((p) => p.member_id !== S.me.id && p.created_at > seenAt()).length;
+function markSeen() {
+  const top = S.posts[0]?.created_at;
+  if (top && top > seenAt()) try { localStorage.setItem(seenKey(), top); } catch {}
+}
+
 function noteBlock(p) {
   const who = member(p.member_id);
   const goal = p.goal_id && S.goals.find((g) => g.id === p.goal_id);
-  const head = `<div class="who"><b>${esc(who?.name)}</b>${ago(p.created_at)}${goal ? ` · ${esc(goal.label)}` : ""}
+  const head = `<div class="who"><b>${esc(who?.name)}</b>${ago(p.created_at)}
+    ${goal && nf.goal !== goal.id ? `<button class="about" data-about="${goal.id}"><i class="ph ph-target"></i>${esc(goal.label)}</button>` : ""}
     ${p.member_id === S.me.id ? `<button class="del" data-del="${p.id}" aria-label="Delete"><i class="ph ph-x"></i></button>` : ""}</div>`;
-  if (p.kind === "photo") return `<div class="note">${head}<img src="${esc(S.urls[p.media_path] || "")}" alt="" loading="lazy">${p.body ? `<p class="hand">${esc(p.body)}</p>` : ""}</div>`;
-  if (p.kind === "text") return `<div class="note">${head}<p class="hand">${esc(p.body)}</p></div>`;
+  const text = p.body ? `<p class="hand">${rich(p.body)}</p>` : "";
+  if (p.kind === "photo") return `<div class="note">${head}<img src="${esc(S.urls[p.media_path] || "")}" alt="" loading="lazy" data-zoom="${esc(p.media_path)}">${text}</div>`;
+  if (p.kind === "text") return `<div class="note">${head}${text}</div>`;
   return `<div class="note">${head}<button class="vn" data-play="${p.id}"><span class="play"><i class="ph-fill ph-play"></i></span>
-    <span class="wave">${wave(p.id, 32).map((h) => `<i style="height:${Math.round(h * 100)}%"></i>`).join("")}</span><span class="len">${fmt(p.duration || 0)}</span></button></div>`;
+    <span class="wave">${wave(p.id, 32).map((h) => `<i style="height:${Math.round(h * 100)}%"></i>`).join("")}</span><span class="len">${fmt(p.duration || 0)}</span></button>${text}</div>`;
 }
 
+// What the notes sheet is showing: everything, or one goal's thread, narrowed by a filter chip.
 let notesOpen = false;
+let nf = { goal: null, view: "all" };
+
+function shown() {
+  return S.posts.filter((p) => {
+    if (nf.goal && p.goal_id !== nf.goal) return false;
+    if (nf.view === "photos") return p.kind === "photo";
+    if (nf.view.startsWith("m:")) return p.member_id === nf.view.slice(2);
+    if (nf.view.startsWith("t:")) return tagsOf(p.body).includes(nf.view.slice(2));
+    return true;
+  });
+}
+
 function drawNotes() {
-  const list = $("#notes", sheet);
+  const list = $("#notes", sheet), head = $("#nhead", sheet);
   if (!list) return;
-  list.innerHTML = S.posts.length ? S.posts.map(noteBlock).join("") : `<p class="none">Nothing yet. Say how it's going.</p>`;
+  const g = nf.goal && S.goals.find((x) => x.id === nf.goal);
+  if (nf.goal && !g) nf.goal = null;
+  if (g) {
+    const who = member(g.member_id);
+    head.innerHTML = `<button class="back" data-clear><i class="ph ph-caret-left"></i>All notes</button>
+      <h3>${esc(g.label)}</h3><p class="sub">${esc(who?.name)} · ${g.done} of ${g.target}${g.note ? ` · ${esc(g.note)}` : ""}</p>`;
+  } else {
+    const people = S.members.filter((m) => S.posts.some((p) => p.member_id === m.id));
+    const tags = [...new Set(S.posts.flatMap((p) => tagsOf(p.body)))];
+    const chip = (v, label) => `<button class="chip ${nf.view === v ? "sel" : ""}" data-view="${esc(v)}">${label}</button>`;
+    head.innerHTML = S.posts.length ? `<div class="filters">${chip("all", "All")}${S.posts.some((p) => p.kind === "photo") ? chip("photos", '<i class="ph ph-image"></i>Photos') : ""}
+      ${people.map((m) => chip(`m:${m.id}`, esc(m.name))).join("")}${tags.map((t) => chip(`t:${t}`, `#${esc(t)}`)).join("")}</div>` : "";
+  }
+  const items = shown();
+  let last = "";
+  list.innerHTML = items.length
+    ? items.map((p) => { const d = dayLabel(p.created_at); const h = d !== last ? `<h4 class="day">${d}</h4>` : ""; last = d; return h + noteBlock(p); }).join("")
+    : `<p class="none">${g ? `Nothing on ${esc(g.label)} yet. Add a photo or say how it went.` : S.posts.length ? "Nothing matches." : "Nothing yet. Say how it's going."}</p>`;
+  head.querySelectorAll("[data-view]").forEach((b) => (b.onclick = () => { nf.view = b.dataset.view; drawNotes(); }));
+  $("[data-clear]", head) && ($("[data-clear]", head).onclick = () => { nf = { goal: null, view: "all" }; draft.goalId = null; drawNotes(); drawCtx(); });
   list.querySelectorAll("[data-play]").forEach((b) => (b.onclick = () => play(b, +b.dataset.play)));
   list.querySelectorAll("[data-del]").forEach((b) => (b.onclick = () => delPost(+b.dataset.del)));
+  list.querySelectorAll("[data-zoom]").forEach((im) => (im.onclick = () => zoom(S.urls[im.dataset.zoom])));
+  list.querySelectorAll("[data-tag]").forEach((b) => (b.onclick = () => { nf = { goal: null, view: `t:${b.dataset.tag}` }; drawNotes(); list.scrollTo(0, 0); }));
+  list.querySelectorAll("[data-about]").forEach((b) => (b.onclick = () => { nf = { goal: +b.dataset.about, view: "all" }; draft.goalId = nf.goal; drawNotes(); drawCtx(); list.scrollTo(0, 0); }));
+  markSeen();
 }
+
+function openNotes(filter = {}, file = null, offerMark = true) {
+  openSheet(`<div class="nhead" id="nhead"></div><div class="notes" id="notes"></div><div class="ctx" id="ctx" hidden></div><div class="compose" id="cmp"></div>`, "notes-sheet");
+  nf = { goal: null, view: "all", ...filter };
+  resetDraft();
+  notesOpen = true;
+  onClose = resetDraft;
+  drawNotes();
+  render();
+  compose();
+  if (file) attachPhoto(file, false, offerMark);
+}
+
+const lb = $("#lb");
+function zoom(src) {
+  if (!src) return;
+  $("img", lb).src = src;
+  lb.classList.add("open");
+}
+lb.onclick = () => lb.classList.remove("open");
+document.addEventListener("keydown", (e) => e.key === "Escape" && lb.classList.remove("open"));
 
 const audio = new Audio();
 let playing = null;
@@ -424,34 +580,103 @@ function busy(btn, label = "Posting") {
   btn.innerHTML = `<i class="ph ph-circle-notch spin"></i> ${label}`;
 }
 
-// The bottom of the notes sheet: close, mic, pen. Pen and mic swap in place.
+// What the next note will carry: a photo, the goal it's about, tags, and whether it also adds a tally mark.
+let draft;
+function resetDraft() {
+  if (draft?.url) URL.revokeObjectURL(draft.url);
+  draft = { goalId: nf.goal, tags: new Set(), blob: null, url: null, mark: false, offerMark: true };
+}
+resetDraft();
+
+async function attachPhoto(file, mark = false, offerMark = true) {
+  const blob = await resizeImage(file).catch(() => null);
+  if (!blob) return toast("Couldn't open that image");
+  if (draft.url) URL.revokeObjectURL(draft.url);
+  Object.assign(draft, { blob, url: URL.createObjectURL(blob), mark, offerMark });
+  write();
+}
+
+// Above the input while writing or recording: the attached photo, which goal it's about, and tags.
+function drawCtx() {
+  const c = $("#ctx", sheet), mode = $("#cmp", sheet)?.className || "";
+  if (!c) return;
+  c.hidden = !/write|rec/.test(mode);
+  if (c.hidden) return;
+  const mine = S.goals.filter((g) => g.member_id === S.me.id);
+  const others = S.goals.filter((g) => g.member_id !== S.me.id);
+  const tags = [...new Set([...QUICK_TAGS, ...S.posts.flatMap((p) => tagsOf(p.body))])];
+  const g = S.goals.find((x) => x.id === draft.goalId);
+  const canMark = draft.blob && draft.offerMark && g?.member_id === S.me.id && g.done < g.target;
+  const goalChip = (x) => `<button class="chip ${draft.goalId === x.id ? "sel" : ""}" data-g="${x.id}"><i class="ph ph-target"></i>${esc(x.label)}${x.member_id !== S.me.id ? ` <small>${esc(member(x.member_id)?.name?.[0] || "")}</small>` : ""}</button>`;
+  c.innerHTML = `${draft.url ? `<span class="thumb"><img src="${draft.url}" alt="Attached photo"><button data-unpic aria-label="Remove photo"><i class="ph-bold ph-x"></i></button></span>` : ""}
+    <div class="chips">
+      ${!draft.blob && /write/.test(mode) ? `<button class="chip" data-pic><i class="ph ph-camera"></i>Photo</button>` : ""}
+      ${canMark ? `<button class="chip ${draft.mark ? "sel" : ""}" data-mark><i class="ph ph-plus"></i>Mark</button>` : ""}
+      ${nf.goal ? (g ? goalChip(g) : "") : [...mine, ...others].map(goalChip).join("")}
+      ${tags.map((t) => `<button class="chip ${draft.tags.has(t) ? "sel" : ""}" data-t="${esc(t)}">#${esc(t)}</button>`).join("")}
+    </div>`;
+  c.querySelectorAll("[data-g]").forEach((b) => (b.onclick = () => { draft.goalId = draft.goalId === +b.dataset.g ? null : +b.dataset.g; drawCtx(); }));
+  c.querySelectorAll("[data-t]").forEach((b) => (b.onclick = () => { draft.tags.has(b.dataset.t) ? draft.tags.delete(b.dataset.t) : draft.tags.add(b.dataset.t); b.classList.toggle("sel"); }));
+  $("[data-mark]", c) && ($("[data-mark]", c).onclick = () => { draft.mark = !draft.mark; drawCtx(); });
+  $("[data-unpic]", c) && ($("[data-unpic]", c).onclick = () => { URL.revokeObjectURL(draft.url); Object.assign(draft, { blob: null, url: null, mark: false }); write(); });
+  $("[data-pic]", c) && ($("[data-pic]", c).onclick = () => pickFile("image/*").then((f) => f && attachPhoto(f)));
+  if (draft.url) $("[data-unpic]", c).previousElementSibling.onclick = () => zoom(draft.url);
+}
+
+// Selected tag chips go on the end of the text, unless already typed.
+function withTags(body) {
+  const have = tagsOf(body);
+  const extra = [...draft.tags].filter((t) => !have.includes(t)).map((t) => `#${t}`).join(" ");
+  return [body, extra].filter(Boolean).join(" ") || null;
+}
+
+// The bottom of the notes sheet: close, camera, mic, pen. Each swaps in place.
 function compose() {
   const c = $("#cmp", sheet);
   if (!c) return;
   c.className = "compose";
   c.innerHTML = `<button class="round" id="x" aria-label="Close"><i class="ph ph-x"></i></button>
     <button class="round mic" id="mic" aria-label="Record a voice note"><i class="ph-fill ph-microphone"></i></button>
-    <button class="round" id="pen" aria-label="Write a note"><i class="ph ph-pen-nib"></i></button>`;
+    <button class="round" id="pen" aria-label="Write a note"><i class="ph ph-pen-nib"></i></button>
+    <button class="round" id="cam" aria-label="Add a photo"><i class="ph ph-camera"></i></button>`;
   $("#x", c).onclick = closeSheet;
   $("#mic", c).onclick = record;
   $("#pen", c).onclick = write;
+  $("#cam", c).onclick = () => pickFile("image/*").then((f) => f && attachPhoto(f));
+  drawCtx();
 }
 
 function write() {
   const c = $("#cmp", sheet);
+  if (!c) return;
+  const kept = $("#tx", c)?.value || "";
   c.className = "compose write";
   c.innerHTML = `<button class="round sm" id="back" aria-label="Back"><i class="ph ph-caret-left"></i></button>
-    <textarea id="tx" class="hand" rows="1" maxlength="2000" placeholder="Write it on the board"></textarea>
+    <textarea id="tx" class="hand" rows="1" maxlength="2000" placeholder="${draft.blob ? "Add a caption" : "Write it on the board"}"></textarea>
     <button class="round sm send" id="ok" aria-label="Post"><i class="ph ph-arrow-up"></i></button>`;
   const tx = $("#tx", c);
+  tx.value = kept;
   tx.oninput = () => { tx.style.height = "auto"; tx.style.height = Math.min(tx.scrollHeight, 140) + "px"; };
+  tx.oninput();
   tx.focus();
-  $("#back", c).onclick = compose;
+  drawCtx();
+  $("#back", c).onclick = () => { Object.assign(draft, { blob: null, url: null, mark: false }); compose(); };
   $("#ok", c).onclick = async (e) => {
-    const body = tx.value.trim();
-    if (!body) return;
-    e.currentTarget.disabled = true;
-    try { await addPost({ kind: "text", body }); compose(); $("#notes", sheet)?.scrollTo(0, 0); } catch (err) { e.currentTarget.disabled = false; fail(err); }
+    const text = tx.value.trim();
+    if (!text && !draft.blob) return tx.focus();
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      const row = { body: withTags(text), goal_id: draft.goalId };
+      if (draft.blob) Object.assign(row, { kind: "photo", media_path: await upload(draft.blob, "jpg") });
+      else row.kind = "text";
+      const g = draft.mark && S.goals.find((x) => x.id === draft.goalId);
+      if (g && g.done < g.target) await sb.from("goals").update({ done: g.done + 1 }).eq("id", g.id);
+      await addPost(row);
+      resetDraft();
+      compose();
+      $("#notes", sheet)?.scrollTo(0, 0);
+    } catch (err) { btn.disabled = false; fail(err); }
   };
 }
 
@@ -461,6 +686,7 @@ async function record() {
   c.innerHTML = `<button class="round sm" id="x" aria-label="Cancel"><i class="ph ph-x"></i></button>
     <span class="dot"></span><span class="time" id="t">0:00</span><span class="live" id="live">${"<i></i>".repeat(24)}</span>
     <button class="round sm send" id="ok" aria-label="Post voice note"><i class="ph ph-arrow-up"></i></button>`;
+  drawCtx();
   let rec;
   try {
     rec = await startRecording({
@@ -472,17 +698,18 @@ async function record() {
     return toast("Microphone access is needed for voice notes");
   }
   const timer = setInterval(() => { const t = $("#t", c); if (t) t.textContent = fmt(rec.elapsed()); }, 250);
-  onClose = () => { clearInterval(timer); rec.cancel(); };
-  $("#x", c).onclick = () => { onClose(); onClose = null; compose(); };
+  onClose = () => { clearInterval(timer); rec.cancel(); resetDraft(); };
+  $("#x", c).onclick = () => { onClose(); onClose = resetDraft; compose(); };
   $("#ok", c).onclick = async (e) => {
-    onClose = null;
+    onClose = resetDraft;
     clearInterval(timer);
     e.currentTarget.disabled = true;
     try {
       const { blob, secs, type } = await rec.stop();
       if (secs < 1) { compose(); return toast("Too short"); }
       const path = await upload(blob, type.includes("mp4") ? "m4a" : "webm");
-      await addPost({ kind: "voice", media_path: path, duration: secs });
+      await addPost({ kind: "voice", media_path: path, duration: secs, goal_id: draft.goalId, body: withTags("") });
+      resetDraft();
       compose();
       $("#notes", sheet)?.scrollTo(0, 0);
     } catch (err) { compose(); fail(err); }
@@ -492,12 +719,7 @@ async function record() {
 const actions = {
   menu() { document.body.classList.add("menu-open"); },
 
-  notes() {
-    openSheet(`<div class="notes" id="notes"></div><div class="compose" id="cmp"></div>`, "notes-sheet");
-    notesOpen = true;
-    drawNotes();
-    compose();
-  },
+  notes() { openNotes(); },
 
   mine() { editPerson(S.me.id); },
 
@@ -510,34 +732,12 @@ const actions = {
     toast("Invite link copied");
   },
 
+  // A photo from the menu: pick the goal it's for in the composer. Proof for one of your goals adds a mark unless you untick it.
   async photo() {
     const file = await pickFile("image/*");
     if (!file) return;
-    const mine = S.goals.filter((g) => g.member_id === S.me.id);
-    const blob = await resizeImage(file).catch(() => null);
-    if (!blob) return toast("Couldn't open that image");
-    const url = URL.createObjectURL(blob);
-    let goalId = null;
-    openSheet(`<h3>Proof</h3><img class="preview-img" src="${url}" alt="Selected photo">
-      ${mine.length ? `<div class="strip">${mine.map((g) => `<button class="chip" data-g="${g.id}">${esc(g.label)}</button>`).join("")}</div>` : ""}
-      <input class="field" id="cap" placeholder="Caption (optional)" maxlength="300" style="margin:${mine.length ? 0 : 12}px 0 16px">
-      <button class="primary" id="ok">Post</button>`);
-    onClose = () => URL.revokeObjectURL(url);
-    sheet.querySelectorAll("[data-g]").forEach((b) => (b.onclick = () => {
-      goalId = goalId === +b.dataset.g ? null : +b.dataset.g;
-      sheet.querySelectorAll("[data-g]").forEach((c) => c.classList.toggle("sel", +c.dataset.g === goalId));
-    }));
-    $("#ok", sheet).onclick = async (e) => {
-      busy(e.currentTarget);
-      try {
-        const path = await upload(blob, "jpg");
-        // Proof for a goal also adds a tally mark.
-        const g = goalId && S.goals.find((x) => x.id === goalId);
-        if (g && g.done < g.target) await sb.from("goals").update({ done: g.done + 1 }).eq("id", g.id);
-        await addPost({ kind: "photo", media_path: path, goal_id: goalId, body: $("#cap", sheet).value.trim() || null });
-        closeSheet();
-      } catch (err) { fail(err); }
-    };
+    openNotes();
+    attachPhoto(file, true);
   },
 
   async scan() {
@@ -567,7 +767,7 @@ const actions = {
   weeks() {
     const w = week();
     openSheet(`<h3>Weeks</h3>
-      <div class="list weeks-list">${S.weeks.map((x) => `<div><button data-w="${x.id}"><span><b>Week ${x.number}</b></span><span class="muted">${weekRange(x)}</span></button></div>`).join("")}</div>
+      <div class="list weeks-list">${S.weeks.map((x) => `<div><button data-w="${x.id}"><span><b>Week ${x.number}</b>${x.id === w.id ? '<i class="ph-bold ph-check" style="color:var(--ink)"></i>' : ""}</span><span class="muted">${weekRange(x)}</span></button></div>`).join("")}</div>
       <div class="row-btns"><button class="ghost" id="new">New blank week</button><button class="primary" id="ed">Edit Week ${w.number}</button></div>`);
     sheet.querySelectorAll("[data-w]").forEach((b) => (b.onclick = () => { S.weekId = +b.dataset.w; closeSheet(); refresh(); }));
     $("#ed", sheet).onclick = editWeek;
@@ -660,7 +860,8 @@ function editPerson(memberId) {
   const draw = () => {
     openSheet(`<h3>${esc(m.name)}</h3>
       <div class="list" id="rows">${rows.map((g, i) => `<div>
-        <span class="grow"><input data-i="${i}" data-f="label" value="${esc(g.label)}" placeholder="Goal" maxlength="60"></span>
+        <span class="grow"><input data-i="${i}" data-f="label" value="${esc(g.label)}" placeholder="Goal" maxlength="60">
+          <input class="detail" data-i="${i}" data-f="note" value="${esc(g.note || "")}" placeholder="Detail (optional)" maxlength="60"></span>
         <input class="num" data-i="${i}" data-f="target" type="number" inputmode="numeric" min="1" max="30" value="${g.target}" aria-label="Times">
         <button data-rm="${i}" title="Remove"><i class="ph ph-trash"></i></button></div>`).join("")}
         <div><button id="add" style="color:var(--marker)"><i class="ph ph-plus"></i> Add goal</button></div>
@@ -681,7 +882,7 @@ function editPerson(memberId) {
     try {
       if (gone.length) { const { error } = await sb.from("goals").delete().in("id", gone); if (error) throw error; }
       for (const [i, g] of keep.entries()) {
-        const row = { label: g.label.trim(), target: g.target, done: Math.min(g.done, g.target), position: i };
+        const row = { label: g.label.trim(), note: g.note?.trim() || null, target: g.target, done: Math.min(g.done, g.target), position: i };
         const { error } = g.id
           ? await sb.from("goals").update(row).eq("id", g.id)
           : await sb.from("goals").insert({ ...row, week_id: S.weekId, member_id: memberId });

@@ -15,6 +15,8 @@ const db = {
     [7, "m-nathan", "Gym", null, 2, 0], [8, "m-nathan", "Practice exams", "materials + mechanics", 2, 0], [9, "m-nathan", "Instagram reel", null, 1, 0],
   ].map(([id, member_id, label, note, target, done], i) => ({ id, week_id: 1, member_id, label, note, target, done, position: i % 3 })),
   posts: [
+    { id: 5, week_id: 1, member_id: "m-nathan", kind: "photo", media_path: "gym.jpg", goal_id: 7, body: "Leg day survived #win", created_at: new Date(Date.now() - 36e5).toISOString() },
+    { id: 4, week_id: 1, member_id: "m-weston", kind: "text", goal_id: 6, body: "Chapter 3 was a slog #stuck", created_at: new Date(Date.now() - 9e6).toISOString() },
     { id: 3, week_id: 1, member_id: "m-weston", kind: "text", body: "Halfway through chapter 4. Ikea run Saturday?", created_at: new Date(Date.now() - 864e5).toISOString() },
     { id: 2, week_id: 1, member_id: "m-ethan", kind: "voice", media_path: "x.m4a", duration: 72, created_at: new Date(Date.now() - 18e6).toISOString() },
   ],
@@ -46,6 +48,11 @@ function query(table) {
   return q;
 }
 
+// Uploaded blobs stay in memory as object URLs; seeded photos are drawn placeholders.
+const files = {
+  "gym.jpg": "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300"><rect width="400" height="300" fill="#c9d6f5"/><circle cx="200" cy="150" r="70" fill="#1d43b8" opacity=".35"/><text x="200" y="160" font-size="34" text-anchor="middle" fill="#1d43b8" font-family="sans-serif">gym proof</text></svg>'),
+};
+
 export function createClient() {
   const channel = { on: () => channel, subscribe: () => channel, unsubscribe() {} };
   return {
@@ -55,7 +62,11 @@ export function createClient() {
     },
     from: query,
     rpc: async (fn) => ({ data: fn === "join_code" ? "demo" : fn === "open_names" ? [] : false, error: null }),
-    storage: { from: () => ({ createSignedUrls: async (ps) => ({ data: ps.map((path) => ({ path, signedUrl: "" })) }), upload: async () => ({ error: null }), remove: async () => ({}) }) },
+    storage: { from: () => ({
+      createSignedUrls: async (ps) => ({ data: ps.map((path) => ({ path, signedUrl: files[path] || "" })) }),
+      upload: async (path, blob) => { files[path] = URL.createObjectURL(blob); return { error: null }; },
+      remove: async () => ({}),
+    }) },
     channel: () => channel,
   };
 }
