@@ -74,7 +74,7 @@ There are no tests and no linter. To verify, run `npm run build` and click throu
   - `drawCtx()` draws the button row above the input: photo thumbnail, `Mark` (adds a tally mark when a photo is linked to your own unfinished goal), goal chips and tag chips.
   - `compose()` (idle: close, mic, pen, camera), `write()` (text or photo caption) and `record()` (voice) swap the bottom bar. `withTags()` adds the selected tag chips to the end of the text.
 - **Unread:** the newest `created_at` you've seen is stored in localStorage as `fridge.seen.<weekId>`. Per device.
-- **Sheets:** `openSheet(html, kind)` / `closeSheet()`. `onClose` is a one-shot cleanup hook (stopping a recording, revoking object URLs). Opening a sheet replaces the current one.
+- **Sheets:** `openSheet(html, kind)` / `closeSheet()`. `onClose` is a one-shot cleanup hook (stopping a recording, revoking object URLs). Opening a sheet replaces the current one. Escape closes the photo viewer, then the menu, then the sheet.
 - **Actions:** the `actions` object holds `menu, notes, mine, invite, photo, scan, blank, weeks, settings`. Any element with `data-act="name"` gets wired to it.
 - **Scan:** `actions.scan` → `scanBoard()` → `showScan()` → `createWeek(board, existing?)`. That fills the current empty week or starts the next one, creates members for unknown names, and starts a blank week by copying the group goal, fun goals and charity.
 
@@ -83,7 +83,8 @@ There are no tests and no linter. To verify, run `npm run build` and click throu
 - Match the existing style: terse, small helper functions, template strings, `querySelectorAll(...).forEach(b => b.onclick = ...)` wiring, and a short `//` comment explaining *why* above anything non-obvious. Don't add a framework or build tooling.
 - Text written on the board (goals, notes, names) uses the `.hand` class (Shantell Sans, ink colour). App controls use the system font. Use colour tokens only (`--ink`, `--ink-2`, `--ink-3`, `--muted`, `--fill`, `--chrome`, …), which handles dark mode automatically.
 - Icons are Phosphor classes (`ph ph-camera`, `ph-bold`, `ph-fill`).
-- Tap targets should be ≥ 32px, 44px for main actions. Respect `prefers-reduced-motion`; the global rule already turns animations off.
+- Tap targets should be ≥ 32px, 44px for main actions. When something has to look smaller (the goal badge, the photo's remove button), widen its hit area with a transparent absolute `::before`. Respect `prefers-reduced-motion`; the global rule already turns animations off.
+- Accessibility: icon-only buttons get an `aria-label`, toggles get `aria-pressed`, and closed overlays (sheet, menu, photo viewer) are `visibility: hidden` after their exit transition so they're out of the tab order and away from screen readers. `#toast` is a polite live region.
 - UI copy is short and plain ("Add your goals", "Nothing yet. Say how it's going.").
 - Commits: imperative summary line, no AI attribution lines.
 
@@ -111,3 +112,4 @@ Ideas, roughly in priority order:
 
 - 2026-10-28: First version: board, tallies, voice/text/photo notes, scanning with Haiku, confirm-to-mark with celebration.
 - 2026-10-29: PR #1. Photo on check-off and afterwards, per-goal note threads, `#tag` tags, filters, Lately on the board, unread count, photo viewer, goal detail field. No schema change. Added this file.
+- 2026-11-02: Accessibility basics: closed sheet/menu/photo viewer are hidden from Tab and screen readers, Escape closes them, toasts are announced, shared chips expose pressed state, Lately photos and voice notes have names, form labels are tied to fields, and the note delete, goal badge and photo remove buttons have 32px hit areas.

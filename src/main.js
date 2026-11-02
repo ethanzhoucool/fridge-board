@@ -163,7 +163,7 @@ function render() {
       <div><h1 class="hand">Week ${w.number}.</h1><p class="sub">${latest ? sub : `Past week · ${weekRange(w)}`}</p></div>
       ${menuBtn}
     </header>
-    ${shared.length ? `<section class="shared hand">${shared.map((c) => `<button class="chk ${c.done ? "on" : ""}" data-chip="${c.i}">${esc(c.label)}${box}</button>`).join("")}</section>` : ""}
+    ${shared.length ? `<section class="shared hand">${shared.map((c) => `<button class="chk ${c.done ? "on" : ""}" data-chip="${c.i}" aria-pressed="${!!c.done}">${esc(c.label)}${box}</button>`).join("")}</section>` : ""}
     <section class="people">${S.members.map(personBlock).join("")}</section>
     ${lately()}
     ${notesBar()}`;
@@ -190,7 +190,7 @@ function lately() {
   };
   return `<section class="lately">
     <h2 class="hand">Lately</h2>
-    ${pics.length ? `<div class="pics">${pics.map((p) => `<button data-pic="${esc(p.media_path)}"><img src="${esc(S.urls[p.media_path])}" alt="" loading="lazy"></button>`).join("")}</div>` : ""}
+    ${pics.length ? `<div class="pics">${pics.map((p) => `<button data-pic="${esc(p.media_path)}" aria-label="Photo from ${esc(member(p.member_id)?.name || "someone")}"><img src="${esc(S.urls[p.media_path])}" alt="" loading="lazy"></button>`).join("")}</div>` : ""}
     ${recent.map(line).join("")}
   </section>`;
 }
@@ -210,7 +210,7 @@ function personBlock(m) {
   return `<div class="person hand ${mine ? "mine" : ""}">
     <h2>${esc(m.name)}</h2>
     ${goals.length ? goals.map((g) => `<div class="goal ${g.done >= g.target ? "full" : ""}" data-goal="${g.id}" role="button" tabindex="0">
-        <span class="t">${esc(g.label)}${g.note ? `<small>${esc(g.note)}</small>` : ""}${strike}</span>${badge(g)}${tally(g)}</div>`).join("")
+        <span class="t">${esc(g.label)}${g.note ? ` <small>${esc(g.note)}</small>` : ""}${strike}</span>${badge(g)}${tally(g)}</div>`).join("")
       : `<button class="goal empty" data-act="mine">Add your goals</button>`}
   </div>`;
 }
@@ -234,7 +234,7 @@ function tally(g, fresh = false, pending = false) {
       x += W;
     }
   }
-  return `<svg class="tally" viewBox="-4 0 ${x + 4} ${H}" width="${x + 4}" height="${H}" aria-label="${g.done} of ${g.target}">${parts.join("")}</svg>`;
+  return `<svg class="tally" role="img" viewBox="-4 0 ${x + 4} ${H}" width="${x + 4}" height="${H}" aria-label="${g.done} of ${g.target}">${parts.join("")}</svg>`;
 }
 
 function wire() {
@@ -372,7 +372,7 @@ async function toggleChip(i, btn) {
   const w = week();
   const patch = i < 0 ? { group_done: !w.group_done } : { fun: w.fun.map((f, k) => (k === i ? { ...f, done: !f.done } : f)) };
   Object.assign(w, patch);
-  btn.classList.toggle("on");
+  btn.setAttribute("aria-pressed", btn.classList.toggle("on"));
   saving++;
   const { error } = await sb.from("weeks").update(patch).eq("id", w.id);
   saving--;
@@ -422,7 +422,7 @@ function noteBlock(p) {
   const text = p.body ? `<p class="hand">${rich(p.body)}</p>` : "";
   if (p.kind === "photo") return `<div class="note">${head}<img src="${esc(S.urls[p.media_path] || "")}" alt="" loading="lazy" data-zoom="${esc(p.media_path)}">${text}</div>`;
   if (p.kind === "text") return `<div class="note">${head}${text}</div>`;
-  return `<div class="note">${head}<button class="vn" data-play="${p.id}"><span class="play"><i class="ph-fill ph-play"></i></span>
+  return `<div class="note">${head}<button class="vn" data-play="${p.id}" aria-label="Voice note, ${fmt(p.duration || 0)}"><span class="play"><i class="ph-fill ph-play"></i></span>
     <span class="wave">${wave(p.id, 32).map((h) => `<i style="height:${Math.round(h * 100)}%"></i>`).join("")}</span><span class="len">${fmt(p.duration || 0)}</span></button>${text}</div>`;
 }
 
@@ -490,7 +490,13 @@ function zoom(src) {
   lb.classList.add("open");
 }
 lb.onclick = () => lb.classList.remove("open");
-document.addEventListener("keydown", (e) => e.key === "Escape" && lb.classList.remove("open"));
+// Escape closes whatever is on top: the photo, then the menu, then the sheet.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (lb.classList.contains("open")) lb.classList.remove("open");
+  else if (document.body.classList.contains("menu-open")) closeMenu();
+  else if (sheetWrap.classList.contains("open")) closeSheet();
+});
 
 const audio = new Audio();
 let playing = null;
@@ -778,10 +784,10 @@ const actions = {
     const { data: code } = await sb.rpc("join_code");
     const link = `${location.origin}/?join=${code}`;
     openSheet(`<h3>Settings</h3>
-      <label class="lbl">Invite link</label>
-      <div style="display:flex;gap:8px"><input class="field" readonly value="${esc(link)}" id="ln"><button class="primary" id="cp" style="padding:12px 16px"><i class="ph ph-share-network"></i></button></div>
+      <label class="lbl" for="ln">Invite link</label>
+      <div style="display:flex;gap:8px"><input class="field" readonly value="${esc(link)}" id="ln"><button class="primary" id="cp" style="padding:12px 16px" aria-label="Share invite link"><i class="ph ph-share-network"></i></button></div>
       <p class="help">Anyone with this link can join after signing in with Google.</p>
-      <label class="lbl">Claude API key (for scanning the board)</label>
+      <label class="lbl" for="key">Claude API key (for scanning the board)</label>
       <input class="field" id="key" type="password" autocomplete="off" placeholder="sk-ant-..." value="${esc(getKey())}">
       <p class="help">Saved only on this device. Get one at console.anthropic.com.</p>
       <div class="row-btns" style="margin-top:20px"><button class="ghost" id="out">Sign out</button><button class="primary" id="sv">Save</button></div>`);
@@ -898,10 +904,10 @@ function editPerson(memberId) {
 function editWeek() {
   const w = week();
   openSheet(`<h3>Week ${w.number}</h3>
-    <label class="lbl">Group goal</label><input class="field" id="gg" value="${esc(w.group_goal || "")}" maxlength="60">
-    <label class="lbl">Fun goals (comma separated)</label><input class="field" id="fun" value="${esc(w.fun.map((f) => f.label).join(", "))}">
-    <label class="lbl">Charity</label><input class="field" id="ch" value="${esc(w.charity || "")}" maxlength="80">
-    <label class="lbl">Starts on</label><input class="field" id="st" type="date" value="${w.starts_on}" style="margin-bottom:18px">
+    <label class="lbl" for="gg">Group goal</label><input class="field" id="gg" value="${esc(w.group_goal || "")}" maxlength="60">
+    <label class="lbl" for="fun">Fun goals (comma separated)</label><input class="field" id="fun" value="${esc(w.fun.map((f) => f.label).join(", "))}">
+    <label class="lbl" for="ch">Charity</label><input class="field" id="ch" value="${esc(w.charity || "")}" maxlength="80">
+    <label class="lbl" for="st">Starts on</label><input class="field" id="st" type="date" value="${w.starts_on}" style="margin-bottom:18px">
     <button class="primary" id="sv">Save</button>`);
   $("#sv", sheet).onclick = async (e) => {
     busy(e.currentTarget, "Saving");
