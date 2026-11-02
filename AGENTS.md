@@ -37,7 +37,7 @@ There are no tests and no linter. To verify, run `npm run build` and click throu
 | `src/scan.js` | Board photo → JSON using the Anthropic structured-output schema. The prompt holds the whiteboard's conventions. |
 | `src/sfx.js` | Synthesized WebAudio sounds for `mark`, `erase` and `done`. No audio files. |
 | `src/style.css` | All styles. Colour tokens on `:root` with a dark-mode override, and the spacing scale `--s1…--s6` (4/8/12/16/24/32). |
-| `index.html` | The shell: `#app`, the sheet (`#sheetWrap` / `#sheet`), the menu (`#menu`), the photo viewer (`#lb`), `#toast`. Loads Shantell Sans and Phosphor icons from CDNs. |
+| `index.html` | The shell: `#app`, the sheet (`#sheetWrap` / `#sheet`), the menu (`#menu`), the photo viewer (`#lb`), `#toast`. Loads Shantell Sans and Phosphor icons from CDNs (only the regular, bold and fill icon stylesheets, loaded without blocking first paint). |
 | `supabase/schema.sql` | The whole database: tables, RLS, RPCs, storage bucket, realtime. **There is no migrations folder.** If you change the schema, edit this file *and* give the SQL to run in the Supabase SQL editor. |
 | `dev/fake-supabase.js` | The demo backend described above. |
 
@@ -82,7 +82,7 @@ There are no tests and no linter. To verify, run `npm run build` and click throu
 
 - Match the existing style: terse, small helper functions, template strings, `querySelectorAll(...).forEach(b => b.onclick = ...)` wiring, and a short `//` comment explaining *why* above anything non-obvious. Don't add a framework or build tooling.
 - Text written on the board (goals, notes, names) uses the `.hand` class (Shantell Sans, ink colour). App controls use the system font. Use colour tokens only (`--ink`, `--ink-2`, `--ink-3`, `--muted`, `--fill`, `--chrome`, …), which handles dark mode automatically.
-- Icons are Phosphor classes (`ph ph-camera`, `ph-bold`, `ph-fill`).
+- Icons are Phosphor classes (`ph ph-camera`, `ph-bold`, `ph-fill`). Only those three weights are loaded; to use thin, light or duotone, add its stylesheet to `index.html`.
 - Tap targets should be ≥ 32px, 44px for main actions. Respect `prefers-reduced-motion`; the global rule already turns animations off.
 - UI copy is short and plain ("Add your goals", "Nothing yet. Say how it's going.").
 - Commits: imperative summary line, no AI attribution lines.
@@ -111,3 +111,4 @@ Ideas, roughly in priority order:
 
 - 2026-10-28: First version: board, tallies, voice/text/photo notes, scanning with Haiku, confirm-to-mark with celebration.
 - 2026-10-29: PR #1. Photo on check-off and afterwards, per-goal note threads, `#tag` tags, filters, Lately on the board, unread count, photo viewer, goal detail field. No schema change. Added this file.
+- 2026-11-02: Phosphor icons load as three non-blocking stylesheets (regular, bold, fill) instead of the package's render-blocking script, which also pulled in three unused weights.
