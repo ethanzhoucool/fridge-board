@@ -57,10 +57,10 @@ There are no tests and no linter. To verify, run `npm run build` and click throu
 
 - **State:** `S = { session, me, members, weeks, weekId, goals, posts, urls }`. Helpers: `week()`, `member(id)`, `esc()` (escape **every** user string you put into HTML), `$()`, `toast()`, `fail()`.
 - **Loading:** `refresh()` fetches members and weeks, then the selected week's goals and posts plus signed URLs, then calls `render()`. If the notes sheet is open it also redraws it.
-- **Realtime:** `subscribe()` triggers a debounced `refresh()` on any change to posts, goals or weeks. The `saving` counter holds the refresh back while an optimistic write is still in flight, so stale counts don't flash.
+- **Realtime:** `subscribe()` triggers a debounced refresh (`later()`) on any change to posts, goals or weeks. Optimistic writes (tally marks, shared chips) go through `optimistic(query)`: the `saving` counter holds `later()` back while one is in flight, a refresh that overlapped one throws its result away and retries (it may have read the old count), only the newest refresh draws, and a failed write refreshes to put the real value back.
 - **Board:** `render()` → header, shared chips (`toggleChip`), `personBlock()` for each member (goal rows with `badge(g)` and `tally(g)`), `lately()`, and `notesBar()`. Tally marks are hand-drawn SVG paths with jitter from `rnd(seed)`.
 - **Tally interaction (your own goals only):**
-  - Tap → `askConfirm()` shows the pending mark plus a `.cam.now` (camera) and `.ok` (✓) button, and times out after 5 seconds.
+  - Tap → `askConfirm()` shows the pending mark plus a `.cam.now` (camera) and `.ok` (✓) button (`showPending()`, also re-run after a re-render), and times out after 5 seconds.
   - ✓ → `change(id, +1)`, then `offerPhoto()` shows `.cam.after` for 4 seconds. `showAfter()` adds it back after a re-render.
   - Camera → `snap(id, mark)`. It **opens the file picker before any `await`**, because iOS only opens pickers inside a user gesture.
   - Press and hold (450ms) → rub one mark out.
@@ -90,7 +90,7 @@ There are no tests and no linter. To verify, run `npm run build` and click throu
 ## Gotchas
 
 - Open file pickers synchronously inside the tap handler (see `snap`, `compose`'s camera button).
-- `render()` rebuilds `#app` completely. Any temporary UI on a row (pending mark, after-camera) has to survive or be re-added; see `showAfter`.
+- `render()` rebuilds `#app` completely. Any temporary UI on a row (pending mark, after-camera) has to survive or be re-added; see `showPending` and `showAfter`.
 - `refresh()` runs on every realtime event, including your own writes. Don't redraw the composer's textarea inside it; `drawCtx()` only redraws the button row.
 - Images are resized to JPEG before upload. The bucket limit is 15 MB.
 - Signed URLs expire after 6 hours. A tab left open longer will show broken images until it refreshes.
@@ -111,3 +111,4 @@ Ideas, roughly in priority order:
 
 - 2026-10-28: First version: board, tallies, voice/text/photo notes, scanning with Haiku, confirm-to-mark with celebration.
 - 2026-10-29: PR #1. Photo on check-off and afterwards, per-goal note threads, `#tag` tags, filters, Lately on the board, unread count, photo viewer, goal detail field. No schema change. Added this file.
+- 2026-11-02: Tally taps vs realtime: a refresh that overlaps an optimistic write no longer undoes the mark on screen, out-of-order refreshes can't draw old data, a pending ✓ survives a re-render, and a failed write puts the real count back (`optimistic()`, `showPending()`).

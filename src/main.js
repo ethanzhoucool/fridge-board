@@ -88,42 +88,54 @@ async function renderJoin() {
 
 // ---------- Data ----------
 
+let channel, refreshT;
+let saving = 0; // optimistic taps still in flight; refreshing now would show stale counts
+let edits = 0, loads = 0; // bumped as optimistic writes start and end, and as refreshes start
+const later = () => { clearTimeout(refreshT); refreshT = setTimeout(() => (saving ? later() : refresh()), 400); };
+
 async function refresh(keepWeek = true) {
+  const n = ++loads, at = edits;
   const [m, w] = await Promise.all([
     sb.from("members").select("*").order("created_at"),
     sb.from("weeks").select("*").order("number", { ascending: false }),
   ]);
   if (m.error || w.error) return fail(m.error || w.error);
-  S.members = m.data;
-  S.weeks = w.data;
-  if (!keepWeek || !week()) S.weekId = S.weeks[0]?.id ?? null;
-  if (S.weekId) {
+  const weekId = keepWeek && w.data.some((x) => x.id === S.weekId) ? S.weekId : w.data[0]?.id ?? null;
+  let goals = [], posts = [];
+  if (weekId) {
     const [g, p] = await Promise.all([
-      sb.from("goals").select("*").eq("week_id", S.weekId).order("position"),
-      sb.from("posts").select("*").eq("week_id", S.weekId).order("created_at", { ascending: false }),
+      sb.from("goals").select("*").eq("week_id", weekId).order("position"),
+      sb.from("posts").select("*").eq("week_id", weekId).order("created_at", { ascending: false }),
     ]);
     if (g.error || p.error) return fail(g.error || p.error);
-    S.goals = g.data;
-    S.posts = p.data;
-    const need = S.posts.map((x) => x.media_path).filter((path) => path && !S.urls[path]);
+    goals = g.data;
+    posts = p.data;
+    const need = posts.map((x) => x.media_path).filter((path) => path && !S.urls[path]);
     if (need.length) {
       const { data } = await sb.storage.from("media").createSignedUrls(need, 60 * 60 * 6);
       data?.forEach((d) => d.signedUrl && (S.urls[d.path] = d.signedUrl));
     }
-  } else {
-    S.goals = [];
-    S.posts = [];
   }
+  // Only the newest refresh draws. One that overlapped a tap may have read the count from before it,
+  // which would undo the mark on screen, so it's thrown away and tried again.
+  if (n !== loads) return;
+  if (at !== edits || saving) return later();
+  Object.assign(S, { members: m.data, weeks: w.data, weekId, goals, posts });
   if (notesOpen) markSeen();
   render();
   if (notesOpen) { drawNotes(); drawCtx(); }
 }
 
-let channel, refreshT;
-let saving = 0; // optimistic taps still in flight; refreshing now would show stale counts
+// Write a change that's already on screen. If it fails, refresh puts the real value back.
+async function optimistic(q) {
+  saving++; edits++;
+  const { error } = await q;
+  saving--; edits++;
+  if (error) { fail(error); refresh(); }
+}
+
 function subscribe() {
   if (channel) return;
-  const later = () => { clearTimeout(refreshT); refreshT = setTimeout(() => (saving ? later() : refresh()), 400); };
   channel = sb.channel("board");
   for (const table of ["posts", "goals", "weeks"]) channel.on("postgres_changes", { event: "*", schema: "public", table }, later);
   channel.subscribe();
@@ -143,14 +155,13 @@ const menuBtn = `<button class="menu-btn" data-act="menu" aria-label="Menu"><i c
 
 function render() {
   const w = week();
-  clearTimeout(pendingT);
-  pending = null;
   if (!w) {
     app.innerHTML = `<header><h1 class="hand">Fridge.</h1>${menuBtn}</header>
       <div class="center" style="min-height:60dvh"><p>No board yet. Snap the fridge and the goals fill in.</p>
       <button class="primary" data-act="scan">Scan the board</button>
       <button class="ghost" data-act="blank">Start blank</button></div>`;
-    return wire();
+    wire();
+    return cancelPending();
   }
   const shared = [];
   if (w.group_goal) shared.push({ label: w.group_goal, done: w.group_done, i: -1 });
@@ -169,6 +180,7 @@ function render() {
     ${notesBar()}`;
   wire();
   showAfter();
+  showPending();
 }
 
 const box = `<svg class="box" viewBox="0 0 17 17" aria-hidden="true"><path d="M1.6 2.2 L15.2 1.6 L15.6 15.1 L1.9 15.6 Z"/><path class="tick" d="M4.5 9.2 L7.4 12.4 L14.8 3.2"/></svg>`;
@@ -286,12 +298,20 @@ function askConfirm(id) {
   const g = S.goals.find((x) => x.id === id);
   if (!g || g.done >= g.target) return toast("Done. Hold to rub one out.");
   pending = id;
-  const row = app.querySelector(`[data-goal="${id}"]`);
+  clearAfter();
+  showPending();
+  pendingT = setTimeout(cancelPending, 5000);
+}
+// Also called after a re-render, so a realtime refresh (like the echo of your last mark) doesn't
+// swallow a mark that's waiting for ✓.
+function showPending() {
+  if (pending == null) return;
+  const row = app.querySelector(`[data-goal="${pending}"]`), g = S.goals.find((x) => x.id === pending);
+  if (!row || !g || g.done >= g.target) return cancelPending();
+  if ($(".ok", row)) return;
   row.classList.add("pending");
   row.querySelector(".tally").outerHTML = tally(g, false, true);
-  clearAfter();
   row.insertAdjacentHTML("beforeend", `<button class="cam now" aria-label="Mark ${esc(g.label)} with a photo"><i class="ph ph-camera"></i></button><button class="ok" aria-label="Confirm ${esc(g.label)}"><i class="ph-bold ph-check"></i></button>`);
-  pendingT = setTimeout(cancelPending, 5000);
 }
 
 function cancelPending() {
@@ -333,8 +353,9 @@ function snap(id, mark) {
 
 async function change(id, d) {
   const g = S.goals.find((x) => x.id === id);
+  if (!g) return;
   const next = Math.min(g.target, Math.max(0, g.done + d));
-  if (!g || next === g.done) return;
+  if (next === g.done) return;
   const finished = next === g.target && g.done < g.target;
   g.done = next;
   const row = app.querySelector(`[data-goal="${id}"]`);
@@ -342,10 +363,7 @@ async function change(id, d) {
   row.classList.toggle("full", g.done >= g.target);
   if (finished) celebrate(row);
   else d > 0 ? sfx.mark() : sfx.erase();
-  saving++;
-  const { error } = await sb.from("goals").update({ done: g.done }).eq("id", id);
-  saving--;
-  if (error) fail(error);
+  await optimistic(sb.from("goals").update({ done: g.done }).eq("id", id));
 }
 
 // Goal finished: the strike draws through, the line bounces, ink flecks fly off the tally, and it chimes.
@@ -373,10 +391,7 @@ async function toggleChip(i, btn) {
   const patch = i < 0 ? { group_done: !w.group_done } : { fun: w.fun.map((f, k) => (k === i ? { ...f, done: !f.done } : f)) };
   Object.assign(w, patch);
   btn.classList.toggle("on");
-  saving++;
-  const { error } = await sb.from("weeks").update(patch).eq("id", w.id);
-  saving--;
-  if (error) fail(error);
+  await optimistic(sb.from("weeks").update(patch).eq("id", w.id));
 }
 
 // ---------- Notes ----------
