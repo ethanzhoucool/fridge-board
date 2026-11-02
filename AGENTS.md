@@ -56,8 +56,8 @@ There are no tests and no linter. To verify, run `npm run build` and click throu
 ## How `main.js` works
 
 - **State:** `S = { session, me, members, weeks, weekId, goals, posts, urls }`. Helpers: `week()`, `member(id)`, `esc()` (escape **every** user string you put into HTML), `$()`, `toast()`, `fail()`.
-- **Loading:** `refresh()` fetches members and weeks, then the selected week's goals and posts plus signed URLs, then calls `render()`. If the notes sheet is open it also redraws it.
-- **Realtime:** `subscribe()` triggers a debounced `refresh()` on any change to posts, goals or weeks. The `saving` counter holds the refresh back while an optimistic write is still in flight, so stale counts don't flash.
+- **Loading:** `boot()` runs on every sign-in change: sign-in screen, join screen, or the board. If a request fails there (offline, say) it shows `renderOffline()` with a Try again button rather than the invite screen, and retries by itself on the `online` event. `refresh()` fetches members and weeks, then the selected week's goals and posts plus signed URLs, then calls `render()` and returns `true`. If the notes sheet is open it also redraws it. It does nothing once signed out (`S.me` is cleared by `boot()`).
+- **Realtime:** `subscribe()` triggers a debounced `refresh()` (`later()`) on any change to posts, goals or weeks. Coming back to the tab (`visibilitychange`) or back online does too; those listeners are added once at load. The `saving` counter holds the refresh back while an optimistic write is still in flight, so stale counts don't flash.
 - **Board:** `render()` → header, shared chips (`toggleChip`), `personBlock()` for each member (goal rows with `badge(g)` and `tally(g)`), `lately()`, and `notesBar()`. Tally marks are hand-drawn SVG paths with jitter from `rnd(seed)`.
 - **Tally interaction (your own goals only):**
   - Tap → `askConfirm()` shows the pending mark plus a `.cam.now` (camera) and `.ok` (✓) button, and times out after 5 seconds.
@@ -111,3 +111,4 @@ Ideas, roughly in priority order:
 
 - 2026-10-28: First version: board, tallies, voice/text/photo notes, scanning with Haiku, confirm-to-mark with celebration.
 - 2026-10-29: PR #1. Photo on check-off and afterwards, per-goal note threads, `#tag` tags, filters, Lately on the board, unread count, photo viewer, goal detail field. No schema change. Added this file.
+- 2026-11-02: Launching offline (or any failed request while loading) shows "Can't reach the board right now" with Try again instead of the invite screen or an endless skeleton, and retries when back online. A refresh after signing out no longer draws the board over the sign-in screen.

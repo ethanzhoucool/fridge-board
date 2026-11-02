@@ -21,7 +21,7 @@ function toast(msg) {
   clearTimeout(toast.t);
   toast.t = setTimeout(() => t.classList.remove("show"), 2600);
 }
-const fail = (e) => { console.error(e); toast(e?.message || "Something went wrong"); };
+const fail = (e) => { console.error(e); toast(navigator.onLine === false ? "You're offline" : e?.message || "Something went wrong"); };
 
 // ---------- Auth & membership ----------
 
@@ -39,13 +39,23 @@ sb.auth.onAuthStateChange((_e, session) => {
 });
 
 async function boot() {
+  S.me = null;
   if (!S.session) return renderSignIn();
   app.innerHTML = `<div class="skeleton" style="width:40%;height:34px"></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton" style="width:70%"></div>`;
-  const { data } = await sb.from("members").select("*").eq("user_id", S.session.user.id).maybeSingle();
+  const { data, error } = await sb.from("members").select("*").eq("user_id", S.session.user.id).maybeSingle();
+  // A failed request (offline, say) isn't the same as not having joined, so don't send them to the invite screen.
+  if (error) return renderOffline();
   S.me = data;
   if (!S.me) return renderJoin();
-  await refresh();
+  if (!(await refresh())) return renderOffline();
   subscribe();
+}
+
+// Couldn't load at all. Try again from here, or by itself once the connection is back.
+function renderOffline() {
+  app.innerHTML = `<div class="center"><h1 class="hand">Fridge.</h1><p>Can't reach the board right now.</p>
+    <button class="primary" id="retry">Try again</button></div>`;
+  $("#retry").onclick = boot;
 }
 
 function renderSignIn() {
@@ -59,7 +69,8 @@ function renderSignIn() {
 
 async function renderJoin() {
   const code = joinCode();
-  const { data: setup } = await sb.rpc("needs_setup");
+  const { data: setup, error: down } = await sb.rpc("needs_setup");
+  if (down) return renderOffline();
   if (!code && !setup) {
     app.innerHTML = `<div class="center"><h1 class="hand">Almost.</h1><p>Ask someone on the board for the invite link, then open it here.</p>
       <button class="ghost" id="out">Sign out</button></div>`;
@@ -67,7 +78,7 @@ async function renderJoin() {
     return;
   }
   const { data: names, error } = await sb.rpc("open_names", { code });
-  if (error) return fail(error);
+  if (error) return renderOffline();
   const first = S.session.user.user_metadata?.full_name?.split(" ")[0] || "";
   app.innerHTML = `<div class="center"><h1 class="hand">Who are you?</h1>
     ${names.length ? `<div class="strip" style="justify-content:center;flex-wrap:wrap">${names.map((n) => `<button class="chip pick" data-n="${esc(n)}">${esc(n)}</button>`).join("")}</div><p>or</p>` : ""}
@@ -89,6 +100,7 @@ async function renderJoin() {
 // ---------- Data ----------
 
 async function refresh(keepWeek = true) {
+  if (!S.me) return; // signed out since this was scheduled
   const [m, w] = await Promise.all([
     sb.from("members").select("*").order("created_at"),
     sb.from("weeks").select("*").order("number", { ascending: false }),
@@ -117,18 +129,21 @@ async function refresh(keepWeek = true) {
   if (notesOpen) markSeen();
   render();
   if (notesOpen) { drawNotes(); drawCtx(); }
+  return true;
 }
 
 let channel, refreshT;
 let saving = 0; // optimistic taps still in flight; refreshing now would show stale counts
+const later = () => { clearTimeout(refreshT); refreshT = setTimeout(() => (saving ? later() : refresh()), 400); };
 function subscribe() {
   if (channel) return;
-  const later = () => { clearTimeout(refreshT); refreshT = setTimeout(() => (saving ? later() : refresh()), 400); };
   channel = sb.channel("board");
   for (const table of ["posts", "goals", "weeks"]) channel.on("postgres_changes", { event: "*", schema: "public", table }, later);
   channel.subscribe();
-  document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && later());
 }
+// Catch up on anything missed while in the background or offline. Added once, not per sign-in.
+document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && later());
+addEventListener("online", () => ($("#retry", app) ? boot() : later()));
 
 // ---------- Board ----------
 
