@@ -105,11 +105,7 @@ async function refresh(keepWeek = true) {
     if (g.error || p.error) return fail(g.error || p.error);
     S.goals = g.data;
     S.posts = p.data;
-    const need = S.posts.map((x) => x.media_path).filter((path) => path && !S.urls[path]);
-    if (need.length) {
-      const { data } = await sb.storage.from("media").createSignedUrls(need, 60 * 60 * 6);
-      data?.forEach((d) => d.signedUrl && (S.urls[d.path] = d.signedUrl));
-    }
+    await sign(S.posts.map((x) => x.media_path).filter(Boolean));
   } else {
     S.goals = [];
     S.posts = [];
@@ -119,11 +115,29 @@ async function refresh(keepWeek = true) {
   if (notesOpen) { drawNotes(); drawCtx(); }
 }
 
+// Signed media URLs stop working after 6 hours. Each one is re-signed an hour early, with a refresh
+// booked for then, so a tab left open (or coming back from the background) keeps its photos and voice notes.
+const TTL = 6 * 3600e3, signedAt = {};
+const resignAt = (path) => (signedAt[path] || 0) + TTL - 3600e3;
+let resignT;
+async function sign(paths) {
+  const need = paths.filter((path) => resignAt(path) <= Date.now());
+  if (need.length) {
+    const at = Date.now();
+    const { data } = await sb.storage.from("media").createSignedUrls(need, TTL / 1000);
+    data?.forEach((d) => d.signedUrl && ((S.urls[d.path] = d.signedUrl), (signedAt[d.path] = at)));
+  }
+  // Paths that failed to sign are retried on the next refresh rather than on a timer.
+  const due = Math.min(...paths.filter((path) => signedAt[path]).map(resignAt));
+  clearTimeout(resignT);
+  if (due < Infinity) resignT = setTimeout(() => later(), Math.max(60e3, due - Date.now()));
+}
+
 let channel, refreshT;
 let saving = 0; // optimistic taps still in flight; refreshing now would show stale counts
+const later = () => { clearTimeout(refreshT); refreshT = setTimeout(() => (saving ? later() : refresh()), 400); };
 function subscribe() {
   if (channel) return;
-  const later = () => { clearTimeout(refreshT); refreshT = setTimeout(() => (saving ? later() : refresh()), 400); };
   channel = sb.channel("board");
   for (const table of ["posts", "goals", "weeks"]) channel.on("postgres_changes", { event: "*", schema: "public", table }, later);
   channel.subscribe();

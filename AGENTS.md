@@ -51,12 +51,12 @@ There are no tests and no linter. To verify, run `npm run build` and click throu
   - **Tags are `#hashtags` inside `body`.** There's no tags column. Voice posts store only their tags in `body`.
 - `app_config`: holds `join_code`. Invite links are `/?join=<code>`, and the first person to sign in needs no code (`needs_setup()`).
 - RLS: members can read everything and edit weeks and goals, but **can only insert and delete their own posts. There's no update policy on posts**, so notes can't be edited yet.
-- Storage: the `media` bucket is private. Paths look like `<member_id>/<uuid>.<ext>` and are read through signed URLs (6h) cached in `S.urls`.
+- Storage: the `media` bucket is private. Paths look like `<member_id>/<uuid>.<ext>` and are read through signed URLs (6h) cached in `S.urls`, re-signed an hour before they expire (`sign()`).
 
 ## How `main.js` works
 
 - **State:** `S = { session, me, members, weeks, weekId, goals, posts, urls }`. Helpers: `week()`, `member(id)`, `esc()` (escape **every** user string you put into HTML), `$()`, `toast()`, `fail()`.
-- **Loading:** `refresh()` fetches members and weeks, then the selected week's goals and posts plus signed URLs, then calls `render()`. If the notes sheet is open it also redraws it.
+- **Loading:** `refresh()` fetches members and weeks, then the selected week's goals and posts plus signed URLs (`sign(paths)`, which only asks for new or nearly expired ones and books a refresh for the next re-sign), then calls `render()`. If the notes sheet is open it also redraws it.
 - **Realtime:** `subscribe()` triggers a debounced `refresh()` on any change to posts, goals or weeks. The `saving` counter holds the refresh back while an optimistic write is still in flight, so stale counts don't flash.
 - **Board:** `render()` → header, shared chips (`toggleChip`), `personBlock()` for each member (goal rows with `badge(g)` and `tally(g)`), `lately()`, and `notesBar()`. Tally marks are hand-drawn SVG paths with jitter from `rnd(seed)`.
 - **Tally interaction (your own goals only):**
@@ -93,7 +93,7 @@ There are no tests and no linter. To verify, run `npm run build` and click throu
 - `render()` rebuilds `#app` completely. Any temporary UI on a row (pending mark, after-camera) has to survive or be re-added; see `showAfter`.
 - `refresh()` runs on every realtime event, including your own writes. Don't redraw the composer's textarea inside it; `drawCtx()` only redraws the button row.
 - Images are resized to JPEG before upload. The bucket limit is 15 MB.
-- Signed URLs expire after 6 hours. A tab left open longer will show broken images until it refreshes.
+- Signed URLs expire after 6 hours. `sign()` re-signs each one an hour early and books a refresh for then, and coming back to the tab refreshes too, so don't cache a URL anywhere but `S.urls` (look it up when you use it, like `zoom` and `play` do).
 
 ## Status and ideas
 
@@ -111,3 +111,4 @@ Ideas, roughly in priority order:
 
 - 2026-10-28: First version: board, tallies, voice/text/photo notes, scanning with Haiku, confirm-to-mark with celebration.
 - 2026-10-29: PR #1. Photo on check-off and afterwards, per-goal note threads, `#tag` tags, filters, Lately on the board, unread count, photo viewer, goal detail field. No schema change. Added this file.
+- 2026-11-02: Signed media URLs are re-signed an hour before their 6h expiry, with a refresh booked for then, so a tab left open no longer shows broken photos or fails to play voice notes (`sign()`).
