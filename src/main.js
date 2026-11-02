@@ -47,7 +47,7 @@ async function boot() {
   if (error) return renderOffline();
   S.me = data;
   if (!S.me) return renderJoin();
-  if (!(await refresh())) return renderOffline();
+  if ((await refresh()) === false) return renderOffline();
   subscribe();
 }
 
@@ -105,7 +105,7 @@ async function refresh(keepWeek = true) {
     sb.from("members").select("*").order("created_at"),
     sb.from("weeks").select("*").order("number", { ascending: false }),
   ]);
-  if (m.error || w.error) return fail(m.error || w.error);
+  if (m.error || w.error) { fail(m.error || w.error); return false; }
   S.members = m.data;
   S.weeks = w.data;
   if (!keepWeek || !week()) S.weekId = S.weeks[0]?.id ?? null;
@@ -114,7 +114,7 @@ async function refresh(keepWeek = true) {
       sb.from("goals").select("*").eq("week_id", S.weekId).order("position"),
       sb.from("posts").select("*").eq("week_id", S.weekId).order("created_at", { ascending: false }),
     ]);
-    if (g.error || p.error) return fail(g.error || p.error);
+    if (g.error || p.error) { fail(g.error || p.error); return false; }
     S.goals = g.data;
     S.posts = p.data;
     const need = S.posts.map((x) => x.media_path).filter((path) => path && !S.urls[path]);
@@ -129,7 +129,6 @@ async function refresh(keepWeek = true) {
   if (notesOpen) markSeen();
   render();
   if (notesOpen) { drawNotes(); drawCtx(); }
-  return true;
 }
 
 let channel, refreshT;
