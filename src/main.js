@@ -660,7 +660,7 @@ function write() {
   tx.oninput();
   tx.focus();
   drawCtx();
-  $("#back", c).onclick = () => { Object.assign(draft, { blob: null, url: null, mark: false }); compose(); };
+  $("#back", c).onclick = () => { if (draft.url) URL.revokeObjectURL(draft.url); Object.assign(draft, { blob: null, url: null, mark: false }); compose(); };
   $("#ok", c).onclick = async (e) => {
     const text = tx.value.trim();
     if (!text && !draft.blob) return tx.focus();
@@ -687,19 +687,24 @@ async function record() {
     <span class="dot"></span><span class="time" id="t">0:00</span><span class="live" id="live">${"<i></i>".repeat(24)}</span>
     <button class="round sm send" id="ok" aria-label="Post voice note"><i class="ph ph-arrow-up"></i></button>`;
   drawCtx();
-  let rec;
+  // The browser may still be asking for the mic. Closing the sheet or tapping × meanwhile has to stop
+  // it from starting to record once it's allowed, with nothing on screen to stop it.
+  let rec, gone = false;
+  onClose = () => { gone = true; resetDraft(); };
+  $("#x", c).onclick = () => { onClose(); onClose = resetDraft; compose(); };
   try {
     rec = await startRecording({
       onLevel: (d) => c.querySelectorAll("#live i").forEach((b, k) => (b.style.height = 12 + (d[k % d.length] / 255) * 88 + "%")),
       onLimit: () => $("#ok", c)?.click(),
     });
   } catch {
+    if (gone) return;
     compose();
     return toast("Microphone access is needed for voice notes");
   }
+  if (gone) return rec.cancel();
   const timer = setInterval(() => { const t = $("#t", c); if (t) t.textContent = fmt(rec.elapsed()); }, 250);
   onClose = () => { clearInterval(timer); rec.cancel(); resetDraft(); };
-  $("#x", c).onclick = () => { onClose(); onClose = resetDraft; compose(); };
   $("#ok", c).onclick = async (e) => {
     onClose = resetDraft;
     clearInterval(timer);

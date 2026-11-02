@@ -32,14 +32,22 @@ function pickMime() {
 export async function startRecording({ onLevel, maxSecs = 120, onLimit }) {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   const mime = pickMime();
-  const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
   const chunks = [];
-  rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
-
-  const ctx = new (window.AudioContext || window.webkitAudioContext)();
-  const analyser = ctx.createAnalyser();
-  analyser.fftSize = 64;
-  ctx.createMediaStreamSource(stream).connect(analyser);
+  let rec, ctx, analyser;
+  try {
+    rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    analyser = ctx.createAnalyser();
+    analyser.fftSize = 64;
+    ctx.createMediaStreamSource(stream).connect(analyser);
+    rec.start(250);
+  } catch (e) {
+    // The browser gave us the mic but can't record: let go of it rather than leave it on.
+    stream.getTracks().forEach((t) => t.stop());
+    ctx?.close();
+    throw e;
+  }
   const data = new Uint8Array(analyser.frequencyBinCount);
   let raf;
   const tick = () => {
@@ -51,7 +59,6 @@ export async function startRecording({ onLevel, maxSecs = 120, onLimit }) {
 
   const started = Date.now();
   const limit = setTimeout(() => onLimit?.(), maxSecs * 1000);
-  rec.start(250);
 
   const cleanup = () => {
     clearTimeout(limit);

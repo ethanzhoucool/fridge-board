@@ -33,7 +33,7 @@ There are no tests and no linter. To verify, run `npm run build` and click throu
 | File | What's in it |
 |---|---|
 | `src/main.js` | Almost everything: auth/join, data loading, board rendering, tally interaction, the notes sheet and composer, menu actions, scan results, editors. Split into `// ---------- Section ----------` blocks. |
-| `src/media.js` | `resizeImage` (to JPEG, longest side 1600 by default), `blobToBase64`, `startRecording` (MediaRecorder: mp4 on Safari, webm elsewhere), `wave` (fake waveform from a seed), `fmt` (m:ss). |
+| `src/media.js` | `resizeImage` (to JPEG, longest side 1600 by default), `blobToBase64`, `startRecording` (MediaRecorder: mp4 on Safari, webm elsewhere; releases the mic if recording can't start), `wave` (fake waveform from a seed), `fmt` (m:ss). |
 | `src/scan.js` | Board photo → JSON using the Anthropic structured-output schema. The prompt holds the whiteboard's conventions. |
 | `src/sfx.js` | Synthesized WebAudio sounds for `mark`, `erase` and `done`. No audio files. |
 | `src/style.css` | All styles. Colour tokens on `:root` with a dark-mode override, and the spacing scale `--s1…--s6` (4/8/12/16/24/32). |
@@ -74,7 +74,7 @@ There are no tests and no linter. To verify, run `npm run build` and click throu
   - `drawCtx()` draws the button row above the input: photo thumbnail, `Mark` (adds a tally mark when a photo is linked to your own unfinished goal), goal chips and tag chips.
   - `compose()` (idle: close, mic, pen, camera), `write()` (text or photo caption) and `record()` (voice) swap the bottom bar. `withTags()` adds the selected tag chips to the end of the text.
 - **Unread:** the newest `created_at` you've seen is stored in localStorage as `fridge.seen.<weekId>`. Per device.
-- **Sheets:** `openSheet(html, kind)` / `closeSheet()`. `onClose` is a one-shot cleanup hook (stopping a recording, revoking object URLs). Opening a sheet replaces the current one.
+- **Sheets:** `openSheet(html, kind)` / `closeSheet()`. `onClose` is a one-shot cleanup hook (stopping a recording, revoking object URLs). Opening a sheet replaces the current one. Set `onClose` *before* any `await` that can outlive the sheet: `record()` does, so closing the sheet while the browser is still asking for the mic stops it from recording afterwards.
 - **Actions:** the `actions` object holds `menu, notes, mine, invite, photo, scan, blank, weeks, settings`. Any element with `data-act="name"` gets wired to it.
 - **Scan:** `actions.scan` → `scanBoard()` → `showScan()` → `createWeek(board, existing?)`. That fills the current empty week or starts the next one, creates members for unknown names, and starts a blank week by copying the group goal, fun goals and charity.
 
@@ -111,3 +111,4 @@ Ideas, roughly in priority order:
 
 - 2026-10-28: First version: board, tallies, voice/text/photo notes, scanning with Haiku, confirm-to-mark with celebration.
 - 2026-10-29: PR #1. Photo on check-off and afterwards, per-goal note threads, `#tag` tags, filters, Lately on the board, unread count, photo viewer, goal detail field. No schema change. Added this file.
+- 2026-11-02: Closing the notes sheet (or tapping ×) while the browser asks for the mic no longer leaves it recording, which used to post a 2-minute voice note on its own. The mic is released if recording can't start, and going back from a photo caption revokes its object URL.
